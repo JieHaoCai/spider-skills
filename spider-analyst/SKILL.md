@@ -556,9 +556,33 @@ Dashboard features:
   - Real-time logs and status monitoring
   - Data report downloads
 
-Tech stack: FastAPI + React + Playwright + httpx + SQLite
-
 Reply Y or N
+```
+
+**If user replies Y**, note the following architecture constraints for Step 7. The dashboard in this project is **not** a separate frontend application — it is a single-command Python server with no build step:
+
+| Constraint | Rule |
+|-----------|------|
+| **No npm, no build** | The frontend is plain JSX transpiled by Babel in the browser at runtime. Never generate a separate React project, `package.json`, or `npm run build` step. |
+| **Vendor libs are pre-bundled** | React, ReactDOM, Antd, Antd Icons, ECharts, dayjs, and Babel are already in `dashboard/static/vendor/`. Reference them via `<script src="/static/vendor/xxx.min.js">` — never add CDN links or npm packages. |
+| **`app.js` is browser-transpiled JSX** | The frontend is a single `dashboard/static/app.js` file written as JSX with `type="text/babel"`. It runs as-is in the browser. Use the same `/* global React, ReactDOM, antd, icons, dayjs */` header and destructure from global `antd` and `icons` objects. |
+| **FastAPI serves static files** | `dashboard/server.py` mounts `StaticFiles` on `/static` and returns `index.html` at `/`. No reverse proxy, no separate dev server. |
+| **One command** | `python main.py dashboard` starts everything. Dashboard code must never require a separate terminal, separate process, or manual build. |
+
+When generating dashboard code, follow the existing `dashboard/` structure exactly:
+```
+dashboard/
+  server.py          ← FastAPI app, StaticFiles mount, index route
+  api/
+    status.py        ← platform/account status endpoints
+    runner.py        ← trigger job endpoints
+    config_api.py    ← read/write config endpoints
+    logs_ws.py       ← WebSocket log streaming
+  static/
+    index.html       ← loads vendor scripts + app.js with type="text/babel"
+    app.js           ← all UI as a single JSX file, globals from vendor
+    style.css        ← styles
+    vendor/          ← DO NOT MODIFY — pre-bundled libs
 ```
 
 ---

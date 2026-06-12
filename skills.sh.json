@@ -1,0 +1,13 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "groupings": [
+    {
+      "title": "Spider & Scraping",
+      "description": "Skills for web scraping analysis, API reverse engineering, and data pipeline scaffolding.",
+      "skills": [
+        "spider-analyst",
+        "spider-exporter"
+      ]
+    }
+  ]
+}

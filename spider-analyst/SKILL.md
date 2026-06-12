@@ -46,6 +46,51 @@ Target URL: `$ARGUMENTS`
 
 ---
 
+### 0.5. Environment Pre-flight (Run Once Before Any Automated Test)
+
+**Goal: ensure Python and Playwright are available before running any script. Never skip this.**
+
+**Step 0.5-A: Check Python**
+
+```bash
+python3 --version 2>/dev/null || python --version 2>/dev/null
+```
+
+If the command fails or returns nothing:
+- Tell the user Python is not installed and guide them:
+  - macOS: `brew install python3` or download from https://www.python.org/downloads/
+  - Windows: download from https://www.python.org/downloads/
+  - Linux: `sudo apt install python3` (Debian/Ubuntu) or `sudo yum install python3` (RHEL)
+- Ask the user to install Python, then reply "done". Wait for confirmation before continuing.
+
+**Step 0.5-B: Check Playwright**
+
+```bash
+python3 -m playwright --version 2>/dev/null
+```
+
+If the command fails (Playwright not installed), install it **locally in the current project directory**:
+
+```bash
+pip3 install playwright && python3 -m playwright install chromium
+```
+
+If `pip3` is not found, try `pip install playwright && python3 -m playwright install chromium`.
+
+Print the output of the install commands so the user can see progress.
+
+After installation, verify it works:
+
+```bash
+python3 -m playwright --version
+```
+
+**Rule: NEVER ask the user to provide cookies, tokens, or any manual credential as a substitute for Playwright. If Playwright is missing, install it. If Python is missing, guide the user to install it. There is no fallback path that bypasses Playwright for browser-based sites.**
+
+Once Python and Playwright are confirmed available, proceed to Step 1.
+
+---
+
 ### 1. Locate the Data Source
 
 **Goal: determine where the target data comes from.**
@@ -433,54 +478,94 @@ Reply Y or N
 
 ---
 
-### 6. Present the Implementation Plan (Wait for Confirmation Before Writing Any Code)
+### 6. Present the Implementation Plan (HARD STOP — Do Not Proceed Until User Types "Y")
 
-Based on all confirmed conclusions, display the complete plan. **Do not create any files yet.**
+**This step is mandatory and cannot be skipped or abbreviated.**
+
+Before this step, every analysis step (1 through 5) must be complete and confirmed by the user. Do not merge this step with any question or ask "should I proceed?" — display the full plan document below, then wait silently for the user to type "Y" or corrections.
+
+**Do not create any files before the user explicitly replies "Y".**
+
+Display the full plan using this exact format:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Spider Analyst — Implementation Plan
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Target:        $ARGUMENTS
+Target:        {$ARGUMENTS}
 Platform name: {PLATFORM_NAME}
 Target data:   {TARGET_DATA}
 
+──────────────────────────────────────
 [Analysis Results]
-  Data source:        (Case A/B/C/D + {TARGET_API})
-  Login required:     (yes/no + credential type)
-  Human intervention: (yes/no + captcha type confirmed by user)
-  API reversible:     (yes/no + replay test result)
+──────────────────────────────────────
+  Data source:        {Case A/B/C/D — brief description}
+                      API endpoint: {TARGET_API if applicable, else "N/A"}
+                      Evidence: {curl result summary / network capture summary}
 
+  Login required:     {yes / no}
+                      Evidence: {unauthenticated replay result / auth headers detected / user confirmed}
+
+  Human intervention: {yes / no}
+                      CAPTCHA type: {slider / image / qrcode / sms / none}
+                      Evidence: {detection result confirmed by user}
+
+  API reversible:     {yes / no}
+                      Evidence: {replay test HTTP status and response preview}
+
+──────────────────────────────────────
 [Recommended Approach]
-  Login strategy:     (fully automated / headed browser + sound alert / manual Cookie export)
-  Data fetching:      (httpx direct call / Playwright browser automation)
-  Session management: (session.json + expiry check / not needed)
-  Scheduling:         (APScheduler daily cron / manual trigger)
+──────────────────────────────────────
+  Login strategy:     {fully automated / headed browser + user completes CAPTCHA / not needed}
+  Data fetching:      {httpx direct API call / Playwright browser automation}
+  Session management: {session.json + expiry check / not needed}
+  Scheduling:         {APScheduler daily cron / manual trigger only}
 
+──────────────────────────────────────
 [Files to Create]
+──────────────────────────────────────
   platforms/{PLATFORM_NAME}/
   ├── __init__.py
-  ├── platform.py        # BasePlatform implementation
-  ├── login.py           # Login logic
-  ├── api_client.py      # httpx wrapper (if applicable)
+  ├── platform.py        ← BasePlatform subclass
+  ├── login.py           ← Login + session extraction
+  ├── api_client.py      ← httpx wrapper (included if API reversible = yes)
   └── jobs/
       ├── __init__.py
-      └── default_job.py # Data pull + stats
+      └── default_job.py ← pull_data + process_stats
 
-  config.yaml            # Append platform config
+  config.yaml            ← append {PLATFORM_NAME} block
 
-  (If Dashboard selected)
-  dashboard/             # FastAPI + React (skipped if already exists)
+  {If Dashboard = Y:}
+  dashboard/             ← FastAPI + React (skipped if already exists)
 
+──────────────────────────────────────
+[Key Selectors / Parameters]
+──────────────────────────────────────
+  Login page URL:        {LOGIN_PAGE_URL}
+  Username selector:     {LOGIN_SELECTORS.account_input}
+  Password selector:     {LOGIN_SELECTORS.password_input}
+  Submit selector:       {LOGIN_SELECTORS.submit_button}
+  CAPTCHA selector:      {LOGIN_SELECTORS.captcha_element or "N/A"}
+  Auth header name:      {TARGET_AUTH_HEADERS key name or "N/A"}
+  Session field(s):      {cookie names / localStorage keys captured}
+
+──────────────────────────────────────
 [Risks]
-  (Anti-scraping measures / Token expiry / CAPTCHA frequency / etc.)
+──────────────────────────────────────
+  {List concrete risks found during analysis, e.g.:
+   - Token expires every 24h — daily re-login needed
+   - Slider CAPTCHA requires manual intervention on each login
+   - API has timestamp param — must be sent within 30s of generation
+   - Rate limit observed: 429 after 10 req/min}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Reply Y to confirm and start generating code.
-Reply N or describe changes to revise the plan.
+Reply Y to confirm — code generation starts immediately.
+Reply N or describe any change to revise the plan first.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+Wait for the user's reply. Do not ask follow-up questions. Do not start writing code speculatively. Do not proceed to Step 7 until the user types "Y".
 
 ---
 
@@ -609,11 +694,12 @@ Please verify the following before running the spider:
 ## Rules
 
 - Every conclusion must come from a real test result, never from assumption.
-- If a tool is unavailable (e.g. Playwright not installed), skip that step, state why, and note the uncertainty in the plan.
+- **Playwright is never optional.** If Playwright is not installed, install it in Step 0.5 before proceeding. Never ask the user to provide cookies, tokens, or session data as a workaround for a missing browser environment.
+- **Python is a prerequisite.** If Python is not found, guide the user to install it and wait for confirmation before continuing.
 - Annotate each conclusion in the plan with its test evidence.
 - Steps 2, 2.5, 3, and 4 must be skipped entirely when Step 1 concludes Case A (data in HTML).
 - If Step 2 confirms login is required, always open a headed browser (Step 2.5) and wait for the user to log in manually before continuing. Do not attempt automated login during the analysis phase.
 - Always navigate to the login page URL discovered in Step 2, never to `$ARGUMENTS`, when running Steps 2.5 and 3.
 - Use the real session credentials from Step 2.5 (`LIVE_SESSION`) when replaying the data API in Step 4.
 - Use selectors confirmed by the user in Step 3 when generating login code in Step 7 — never use hardcoded placeholder selectors.
-- Never create any files before the user confirms the plan in Step 6.
+- **Step 6 is a mandatory hard stop.** Display the complete plan document in full, then wait for the user to type "Y" before writing any file. Do not compress, abbreviate, or omit any section of the plan. Do not ask "should I proceed?" — the plan itself asks that at its end.

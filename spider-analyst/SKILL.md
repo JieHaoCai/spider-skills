@@ -63,31 +63,48 @@ If the command fails or returns nothing:
   - Linux: `sudo apt install python3` (Debian/Ubuntu) or `sudo yum install python3` (RHEL)
 - Ask the user to install Python, then reply "done". Wait for confirmation before continuing.
 
-**Step 0.5-B: Check Playwright**
+**Step 0.5-B: Set up a project-local virtual environment with Playwright**
+
+All dependencies MUST be installed inside the project root directory — never in `/tmp/`, the global system Python, or any path outside the project. This ensures dependencies survive restarts and stay tied to the project.
+
+First, determine the project root (the directory containing this spider project, i.e. where `platforms/` lives):
 
 ```bash
-python3 -m playwright --version 2>/dev/null
+# Confirm the project root
+pwd
+ls platforms/
 ```
 
-If the command fails (Playwright not installed), install it **locally in the current project directory**:
+Then check if a `.venv` already exists in the project root:
 
 ```bash
-pip3 install playwright && python3 -m playwright install chromium
+ls .venv/bin/python 2>/dev/null && echo "venv exists" || echo "no venv"
 ```
 
-If `pip3` is not found, try `pip install playwright && python3 -m playwright install chromium`.
+**If `.venv` does not exist**, create it:
 
-Print the output of the install commands so the user can see progress.
+```bash
+python3 -m venv .venv
+```
+
+**Always install Playwright into `.venv`**, regardless of whether it is already installed globally:
+
+```bash
+.venv/bin/pip install playwright
+.venv/bin/playwright install chromium
+```
 
 After installation, verify it works:
 
 ```bash
-python3 -m playwright --version
+.venv/bin/python -m playwright --version
 ```
 
-**Rule: NEVER ask the user to provide cookies, tokens, or any manual credential as a substitute for Playwright. If Playwright is missing, install it. If Python is missing, guide the user to install it. There is no fallback path that bypasses Playwright for browser-based sites.**
+**From this point forward, always use `.venv/bin/python` to run every Python script in this skill — never use the bare `python3` command, which may resolve to the global or `/tmp/` interpreter.**
 
-Once Python and Playwright are confirmed available, proceed to Step 1.
+**Rule: NEVER ask the user to provide cookies, tokens, or any manual credential as a substitute for Playwright. If Playwright is missing, install it into `.venv`. If Python is missing, guide the user to install it. There is no fallback path that bypasses Playwright for browser-based sites. Never install into `/tmp/` or any global location.**
+
+Once `.venv/bin/python -m playwright --version` succeeds, proceed to Step 1.
 
 ---
 
@@ -695,6 +712,7 @@ Please verify the following before running the spider:
 
 - Every conclusion must come from a real test result, never from assumption.
 - **Playwright is never optional.** If Playwright is not installed, install it in Step 0.5 before proceeding. Never ask the user to provide cookies, tokens, or session data as a workaround for a missing browser environment.
+- **Always install into the project-local `.venv`.** Never install Playwright or any Python package into `/tmp/`, the global system Python, or any path outside the project root. Always run Python scripts with `.venv/bin/python`, never the bare `python3` command.
 - **Python is a prerequisite.** If Python is not found, guide the user to install it and wait for confirmation before continuing.
 - Annotate each conclusion in the plan with its test evidence.
 - Steps 2, 2.5, 3, and 4 must be skipped entirely when Step 1 concludes Case A (data in HTML).

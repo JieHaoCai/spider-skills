@@ -38,17 +38,18 @@
 需要 Node.js 18+。
 
 ```bash
+# 一次安装所有技能（推荐）
+npx skills add JieHaoCai/spider-skills --all
+
+# 全局安装所有技能
+npx skills add JieHaoCai/spider-skills --all -g
+
 # 安装单个技能
 npx skills add JieHaoCai/spider-skills --skill spider-analyst
 npx skills add JieHaoCai/spider-skills --skill spider-exporter
 
-# 全局安装
-npx skills add JieHaoCai/spider-skills --skill spider-analyst -g
-npx skills add JieHaoCai/spider-skills --skill spider-exporter -g
-
-# 指定 agent
-npx skills add JieHaoCai/spider-skills --skill spider-analyst -a claude-code
-npx skills add JieHaoCai/spider-skills --skill spider-exporter -a claude-code
+# 指定 agent 安装
+npx skills add JieHaoCai/spider-skills --all -a claude-code
 ```
 
 ## 使用

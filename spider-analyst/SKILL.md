@@ -282,81 +282,99 @@ Does this match what you know about the site? Reply Y to confirm or correct me.
 
 Only execute this step if Step 2 confirmed login is required.
 
-Open a **headed** (visible) browser window and navigate to `LOGIN_PAGE_URL`, then prompt the user to log in manually:
+**This step has two phases separated by a HARD STOP. Do not run Phase 2 until the user explicitly types "done".**
+
+---
+
+**Phase 2.5-A: Open the browser and wait**
+
+Run the following script to open a headed browser at the login page. The script keeps the browser open for up to 10 minutes and writes session data to a local file once the page navigates away from the login URL (i.e. the user has logged in):
 
 ```python
-import asyncio
+import asyncio, json, pathlib
 from playwright.async_api import async_playwright
 
-async def open_login_session(login_url: str):
+LOGIN_URL = "<LOGIN_PAGE_URL>"
+SESSION_FILE = ".venv_session.json"
+
+async def open_and_wait(login_url):
     async with async_playwright() as p:
-        # Launch headed browser so the user can see and interact with the page
         browser = await p.chromium.launch(headless=False)
         context = await browser.new_context()
         page = await context.new_page()
         await page.goto(login_url, wait_until="load", timeout=30000)
+        print(f"Browser opened at: {login_url}")
+        print("Waiting for user to log in (timeout: 10 minutes)...")
+        # Wait until the page navigates away from the login URL
+        try:
+            await page.wait_for_url(
+                lambda url: login_url not in url,
+                timeout=600000  # 10 minutes
+            )
+            print("Navigation detected — looks like login succeeded.")
+        except Exception:
+            print("Timeout or no navigation detected. Extracting session anyway.")
+        # Extract session
+        cookies = await context.cookies()
+        storage = await page.evaluate("""() => {
+            const r = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                r[k] = localStorage.getItem(k);
+            }
+            return r;
+        }""")
+        session = {"cookies": cookies, "localStorage": storage}
+        pathlib.Path(SESSION_FILE).write_text(json.dumps(session, ensure_ascii=False, indent=2))
+        print(f"Session saved to {SESSION_FILE}")
+        await browser.close()
 
-        print("Browser window opened. Waiting for user to log in...")
-        # Hold the browser open — do not close until user signals success
-        # The session will be extracted after the user confirms login
-        return page, context, browser
-
-page, context, browser = asyncio.run(open_login_session("<LOGIN_PAGE_URL>"))
+asyncio.run(open_and_wait(LOGIN_URL))
 ```
 
-Tell the user:
+After starting this script, immediately output the following message and **STOP — do not run any more code or continue to Phase 2.5-B until the user replies**:
 
 ```
-A browser window has opened at: {LOGIN_PAGE_URL}
+Browser window is now open at: {LOGIN_PAGE_URL}
 
-Please log in manually (complete any CAPTCHA, SMS verification, or QR code scan).
-Once you are successfully logged in and can see the main page, reply "done".
+Please log in manually in the browser window.
+Complete any CAPTCHA, SMS verification, or QR code scan as needed.
+
+Once you can see the main page (login is complete), type "done" to continue.
 ```
 
-Wait for the user to reply "done". Then extract the session:
+**HARD STOP: Wait here. Do not proceed to Phase 2.5-B or any subsequent step until the user types "done".**
+
+---
+
+**Phase 2.5-B: Read the extracted session (only after user types "done")**
+
+Once the user has typed "done", read the session file and print auth-relevant fields:
 
 ```python
-import asyncio, json
+import json, pathlib
 
-async def extract_session(context):
-    cookies = await context.cookies()
-    # Also capture localStorage tokens if present
-    storage = await page.evaluate("""() => {
-        const result = {};
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            result[key] = localStorage.getItem(key);
-        }
-        return result;
-    }""")
-    await browser.close()
-    return {"cookies": cookies, "localStorage": storage}
+session = json.loads(pathlib.Path(".venv_session.json").read_text())
 
-session = asyncio.run(extract_session(context))
-
-# Print auth-related items
 auth_cookies = [c for c in session["cookies"] if any(
-    k in c["name"].lower() for k in ["token", "auth", "session", "sid"]
+    k in c["name"].lower() for k in ["token", "auth", "session", "sid", "user"]
 )]
 auth_storage = {k: v for k, v in session["localStorage"].items() if any(
     k2 in k.lower() for k2 in ["token", "auth", "session"]
 )}
 
-print("Extracted cookies:", auth_cookies)
-print("Extracted localStorage tokens:", auth_storage)
+print("Auth cookies:", [(c["name"], c["value"][:20]+"...") for c in auth_cookies])
+print("Auth localStorage keys:", list(auth_storage.keys()))
 ```
 
-Store the extracted credentials as `LIVE_SESSION` for use in Steps 3 and 4.
-
-Tell the user what was captured:
+Store the result as `LIVE_SESSION`. Then tell the user:
 
 ```
-Login successful. I extracted the following credentials:
+Login session captured:
   Cookies: {list auth-related cookie names}
   localStorage tokens: {list auth-related key names}
 
-These will be used to replay the data API in Step 4.
-Proceeding to analyze the login page for CAPTCHA type...
+Proceeding to Step 3.
 ```
 
 ---

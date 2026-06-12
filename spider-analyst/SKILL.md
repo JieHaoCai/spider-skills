@@ -99,12 +99,14 @@ Ask the user directly:
 ```
 Does this site require login to access the data?
 
-  Y — Yes, I need to log in
-  N — No, the data is publicly accessible
+  Y — Yes, login is required to see any data
+  M — Login is optional, but gives access to more or better data (recommend login)
+  N — No login needed, public data is sufficient
   ? — I'm not sure, please test automatically
 ```
 
-**If user replies Y** → Proceed to Step 2.5-LOGIN.
+**If user replies Y or M** → Treat identically: proceed to Step 2.5-LOGIN.
+Login always gives the most complete dataset and the most reliable session for API replay.
 
 **If user replies N** → Proceed to Step 2.5-PUBLIC.
 
@@ -119,7 +121,20 @@ curl -s "$ARGUMENTS" \
 grep -c "login\|signin\|401\|403" /tmp/spider_noauth.txt
 ```
 
-Report findings and ask the user to confirm before proceeding.
+Report findings and ask the user to confirm before proceeding:
+
+```
+Auto-detection result:
+  Public page status:  {http_code}
+  Login signals found: {yes/no — "login", "signin", 401, 403 keywords}
+
+Does the site return useful data without login, or only partial/gated data?
+  Y — Login required (no data without it)
+  M — Partial data available publicly, but login gives more
+  N — Public data is fully sufficient
+```
+
+**If user replies Y or M** → Proceed to Step 2.5-LOGIN. **If N** → Proceed to Step 2.5-PUBLIC.
 
 ---
 

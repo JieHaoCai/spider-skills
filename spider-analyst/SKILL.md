@@ -559,17 +559,38 @@ Dashboard features:
 Reply Y or N
 ```
 
-**If user replies Y**, note the following architecture constraints for Step 7. The dashboard in this project is **not** a separate frontend application — it is a single-command Python server with no build step:
+**If user replies Y**, ask the user which frontend approach they prefer:
 
-| Constraint | Rule |
-|-----------|------|
-| **No npm, no build** | The frontend is plain JSX transpiled by Babel in the browser at runtime. Never generate a separate React project, `package.json`, or `npm run build` step. |
-| **Vendor libs are pre-bundled** | React, ReactDOM, Antd, Antd Icons, ECharts, dayjs, and Babel are already in `dashboard/static/vendor/`. Reference them via `<script src="/static/vendor/xxx.min.js">` — never add CDN links or npm packages. |
-| **`app.js` is browser-transpiled JSX** | The frontend is a single `dashboard/static/app.js` file written as JSX with `type="text/babel"`. It runs as-is in the browser. Use the same `/* global React, ReactDOM, antd, icons, dayjs */` header and destructure from global `antd` and `icons` objects. |
-| **FastAPI serves static files** | `dashboard/server.py` mounts `StaticFiles` on `/static` and returns `index.html` at `/`. No reverse proxy, no separate dev server. |
-| **One command** | `python main.py dashboard` starts everything. Dashboard code must never require a separate terminal, separate process, or manual build. |
+```
+Which frontend approach do you want for the dashboard?
 
-When generating dashboard code, follow the existing `dashboard/` structure exactly:
+  A — CDN + browser Babel (Recommended)
+        No build step. React/Antd/ECharts loaded via <script> tags.
+        JSX written in a single app.js, transpiled in the browser at runtime.
+        Start with: python main.py dashboard
+        Best for: simple operational dashboards, fast iteration, no Node.js needed.
+
+  B — Scaffold (Vite + React)
+        Separate frontend project. Requires npm install + npm run build.
+        Needs two terminals (FastAPI + Vite dev server) during development.
+        Best for: complex UI, TypeScript, component libraries with tree-shaking.
+```
+
+Store the answer as `DASHBOARD_MODE`.
+
+---
+
+**If `DASHBOARD_MODE = A` (CDN)**, generate dashboard code with these rules:
+
+| Rule | Detail |
+|------|--------|
+| No npm or build step | Never generate `package.json`, `vite.config.*`, or any build command |
+| Load libs via `<script>` | Use `<script src="/static/vendor/xxx.min.js">` tags in `index.html`. Available vendor files: `react.min.js`, `react-dom.min.js`, `antd.min.js`, `antd-icons.min.js`, `echarts.min.js`, `dayjs.min.js`, `babel.min.js` |
+| Single JSX file | All UI in `dashboard/static/app.js` with `type="text/babel"`. Start with `/* global React, ReactDOM, antd, icons, dayjs */` and destructure from global objects |
+| FastAPI serves static files | `dashboard/server.py` mounts `StaticFiles` on `/static`, serves `index.html` at `/` |
+| One command | `python main.py dashboard` starts everything — no separate process needed |
+
+Follow this file layout:
 ```
 dashboard/
   server.py          ← FastAPI app, StaticFiles mount, index route
@@ -579,11 +600,19 @@ dashboard/
     config_api.py    ← read/write config endpoints
     logs_ws.py       ← WebSocket log streaming
   static/
-    index.html       ← loads vendor scripts + app.js with type="text/babel"
-    app.js           ← all UI as a single JSX file, globals from vendor
-    style.css        ← styles
-    vendor/          ← DO NOT MODIFY — pre-bundled libs
+    index.html       ← loads vendor <script> tags + app.js (type="text/babel")
+    app.js           ← all UI as single JSX file, globals from vendor
+    style.css
+    vendor/          ← pre-bundled libs, do not modify
 ```
+
+---
+
+**If `DASHBOARD_MODE = B` (Scaffold)**, generate a standard Vite + React project:
+- Backend: `dashboard/server.py` (FastAPI, CORS enabled for dev)
+- Frontend: `dashboard/frontend/` with `vite.config.ts`, `src/`, `package.json`
+- In production, `npm run build` outputs to `dashboard/static/`, served by FastAPI StaticFiles
+- Document clearly in the checklist that two steps are required: build frontend, then start Python server
 
 ---
 

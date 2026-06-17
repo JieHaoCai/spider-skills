@@ -778,18 +778,84 @@ Store as `STOP_CONDITION`. Include the exact field name and value from the API r
 
 ### 4. Assess API Reverse Engineering Feasibility
 
-**Goal: determine whether plain HTTP calls (httpx) can replace browser automation for data fetching.**
+**Goal: determine whether the target API can be replayed with plain httpx, or requires browser automation. Default to browser automation unless the evidence clearly shows httpx is viable.**
 
-#### Step 4-A: Check for signing or dynamic parameters
+#### Step 4-A: Capture the same request multiple times to observe parameter variance
 
-Inspect `TARGET_API` URL and `TARGET_REQUEST_BODY` for:
-- Query params: `sign=`, `_sign=`, `signature=`, `nonce=`, `timestamp=`
-- Custom headers: `X-Request-Sign`, `X-Nonce`, `X-Signature`, `X-Timestamp`
-- Body fields that look like hashes or encoded tokens
+Trigger the target page/interaction **3 times** (reload or repeat the trigger condition) to collect 3 samples of `TARGET_API`. Use the Step 3-A capture script again, appending results.
 
-If found, note them as `SIGNING_PARAMS` — these indicate the API may resist direct replay.
+For each sample, record:
+- Full URL including all query parameters
+- Full request body (if POST)
+- All request headers
 
-#### Step 4-B: Direct replay test with real session
+Then compare the 3 samples side by side and classify every parameter:
+
+| Parameter | Sample 1 | Sample 2 | Sample 3 | Classification |
+|-----------|----------|----------|----------|----------------|
+| `page` | 1 | 1 | 1 | static |
+| `timestamp` | 1718000001 | 1718000045 | 1718000089 | dynamic — time-based |
+| `sign` | a3f9... | 7c2b... | 91de... | dynamic — changes every request |
+| `token` | eyJh... | eyJh... | eyJh... | static — session token |
+
+Report to the user:
+
+```
+接口参数分析（共采集 3 次请求）：
+
+  URL：{TARGET_API base path}
+
+  参数对比：
+  {table of all params with 3 sample values and classification}
+
+  动态参数（每次请求都变化）：{list}
+  静态参数（保持不变）：{list}
+```
+
+#### Step 4-B: Assess reversibility of dynamic parameters
+
+For each dynamic parameter found in Step 4-A, assess its reversibility:
+
+| Dynamic param | Pattern observed | Reversibility |
+|---------------|-----------------|---------------|
+| `timestamp` | Unix seconds, increments | Easy — `int(time.time())` |
+| `nonce` | Random 16-char hex | Easy — `secrets.token_hex(8)` |
+| `sign` | 32-char hex, changes with every other param | Hard — likely HMAC/MD5 of other params, algorithm unknown |
+| `_signature` | Long base64 string | Hard — likely RSA/JWT signed by JS |
+
+**Reversibility rules:**
+- **Easy**: pure time-based, random nonce with no validation, or UUID — httpx can reproduce these trivially
+- **Medium**: simple hash of known params (MD5/SHA of concatenated values) — may be reversible by inspecting JS, but takes effort
+- **Hard**: HMAC with unknown key, RSA signature, encrypted token, or any value that changes when params don't — do NOT attempt to reverse; use browser automation instead
+
+#### Step 4-C: Decision
+
+Apply this decision tree strictly — **do not attempt httpx if any Hard parameter exists**:
+
+```
+Any Hard dynamic param?
+  YES → FETCH_STRATEGY = playwright-automation  (stop here, skip 4-D)
+  NO  →
+    Any Medium dynamic param?
+      YES → Ask user: "Is it worth spending time reversing this? Y = try httpx, N = use browser"
+              Store user's answer → proceed accordingly
+      NO  → Proceed to Step 4-D (direct replay test)
+```
+
+If `FETCH_STRATEGY = playwright-automation` is decided here, tell the user:
+
+```
+检测到高难度动态参数：{param names}
+
+这些参数每次请求都变化，且规律无法从请求本身推断（可能是 JS 内部签名算法）。
+逆向成本高，稳定性差，建议直接使用浏览器自动化抓取。
+
+抓取策略：Playwright 浏览器模拟
+```
+
+Then skip Step 4-D and store `FETCH_STRATEGY = playwright-automation`.
+
+#### Step 4-D: Direct replay test (only if no Hard params)
 
 Use `LIVE_SESSION` cookies and tokens to replay `TARGET_API` directly:
 
@@ -805,24 +871,22 @@ curl -s "<TARGET_API>" \
 
 Interpret the result:
 
-| Result | Meaning | Recommended fetch strategy |
-|--------|---------|---------------------------|
-| 200 with correct data | httpx works with a valid session | **httpx direct call** |
-| 401 / token invalid | Need to re-login first, then httpx works | **httpx + login flow** |
-| 4xx with signature error | Signing params are dynamically generated | **Playwright browser automation** |
-| Correct data but wrong format | May need specific headers | Adjust headers and retry |
+| Result | Meaning | Strategy |
+|--------|---------|----------|
+| 200 with correct data | httpx works | **httpx direct call** |
+| 401 / 403 | Session valid but token format wrong — adjust headers | Retry with corrected headers |
+| 4xx with "sign" / "invalid" error | Signing params rejected even without Hard params | **playwright-automation** |
+| Correct data | Confirmed httpx viable | **httpx direct call** |
 
 Report to the user:
 
 ```
-Replay test result:
-  Status: {http_code}
-  Response: {first 300 chars}
+直接重放测试结果：
+  状态码：{http_code}
+  响应内容：{first 300 chars}
 
-Interpretation: {one of the four cases above}
-
-Does this match your expectation?
-Reply Y to confirm, or describe what you see.
+结论：{httpx 可用 / 需要浏览器模拟}
+是否符合预期？回复 Y 确认，或描述问题。
 ```
 
 **HARD STOP: wait for user confirmation.**

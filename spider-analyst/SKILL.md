@@ -726,15 +726,19 @@ dashboard/
 - In production, `npm run build` outputs to `dashboard/static/`, served by FastAPI StaticFiles
 - Document clearly in the checklist that two steps are required: build frontend, then start Python server
 
+**After Step 5 is answered: STOP. Do NOT generate any code or files. Proceed immediately to Step 6.**
+
 ---
 
 ### 6. Present the Implementation Plan (HARD STOP — Do Not Proceed Until User Types "Y")
 
-**This step is mandatory and cannot be skipped or abbreviated.**
+**MANDATORY. Cannot be skipped. Cannot be abbreviated. Cannot be merged with any other step.**
 
-Every analysis step (1 through 5) must be complete and confirmed before this step. Do not merge this with any question — display the full plan, then wait for the user to type "Y".
+**DO NOT write any file, generate any code, or take any action until the user explicitly types "Y" in reply to this plan.**
 
-**Do not create any files before the user explicitly replies "Y".**
+The dashboard code layout rules in Step 5 are reference material for code generation — they are NOT a signal to start generating code. Code generation happens only in Step 7, only after the user types "Y" here.
+
+Every analysis step (1 through 5) must be complete before this step. Display the full plan below in its entirety, then output nothing else and wait.
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -943,6 +947,6 @@ platforms:
 - **Step 3-B is a HARD STOP.** Display all captured requests and wait for the user to identify the target endpoint. Do not proceed to Step 3-C until answered.
 - **Step 3-C is a HARD STOP.** Ask about trigger conditions and wait for the answer before proceeding to Step 3-D.
 - **Step 3-D is a HARD STOP.** Ask about the stopping/termination condition and wait for the answer before proceeding to Step 4. Never assume the stop condition — always confirm with the user.
-- **Step 6 is a mandatory HARD STOP.** Display the complete plan in full, then wait for "Y". Do not abbreviate any section. Do not ask "should I proceed?" — the plan itself ends with that question.
-- Never create any files before the user confirms the plan in Step 6.
+- **Step 6 is a mandatory HARD STOP.** Display the complete plan in full, then wait for "Y". Do not abbreviate any section. Do not ask "should I proceed?" — the plan itself ends with that question. The dashboard layout rules shown in Step 5 are reference only — seeing them does NOT mean code generation should start.
+- **Never create any files, write any code, or call any write tool before the user types "Y" in Step 6.** This applies even if all analysis is complete and the plan is obvious.
 - Steps 2.5 through 4 are skipped entirely when Step 1 concludes Case A (data in HTML source).

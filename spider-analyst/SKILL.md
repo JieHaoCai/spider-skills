@@ -825,27 +825,102 @@ Wait for the user's reply. Do not ask follow-up questions. Do not start writing 
 
 ---
 
-### 7. Generate Code (Only After User Confirms)
+### 7. Implement Step by Step (Only After User Confirms Plan)
 
-Create files in this order:
+#### 7-0. Create `plan.md` in the project root
 
-#### 7-1. `platforms/{PLATFORM_NAME}/__init__.py`
+Before writing any platform code, create `plan.md` in the project root with all implementation steps listed as unchecked. Each step gets a test script name and a pass criterion. Example structure — adapt to actual analysis results:
 
-```python
-from platforms.{PLATFORM_NAME}.platform import {PlatformName}Platform as Platform
-__all__ = ["Platform"]
+```markdown
+# {PLATFORM_NAME} 爬虫实现计划
+
+> 由 spider-analyst 生成。每完成并确认一个步骤后打勾。
+
+## 实现步骤
+
+- [ ] **Step 1 — 项目结构与平台注册**
+  - 文件：`platforms/{PLATFORM_NAME}/__init__.py`, `platform.py`, `config.yaml`
+  - 测试：`tests/test_{PLATFORM_NAME}_step1.py`
+  - 通过标准：脚本输出平台名称和 job 列表，无报错
+
+- [ ] **Step 2 — 登录与 Session 提取**
+  - 文件：`platforms/{PLATFORM_NAME}/login.py`
+  - 测试：`tests/test_{PLATFORM_NAME}_step2.py`
+  - 通过标准：【需人工确认】浏览器打开登录页，登录成功后 session 文件写入正确的 cookie/token
+
+- [ ] **Step 3 — API 调用与数据拉取**
+  - 文件：`platforms/{PLATFORM_NAME}/api_client.py` 或 `browser_scraper.py`
+  - 测试：`tests/test_{PLATFORM_NAME}_step3.py`
+  - 通过标准：脚本打印第一页原始数据，字段与预期一致
+
+- [ ] **Step 4 — 分页与终止条件**
+  - 文件：`platforms/{PLATFORM_NAME}/api_client.py`（更新分页逻辑）
+  - 测试：`tests/test_{PLATFORM_NAME}_step4.py`
+  - 通过标准：脚本抓取全部页面并在 {STOP_CONDITION} 时停止，打印总条数
+
+- [ ] **Step 5 — 数据存储与处理**
+  - 文件：`platforms/{PLATFORM_NAME}/jobs/default_job.py`
+  - 测试：`tests/test_{PLATFORM_NAME}_step5.py`
+  - 通过标准：生成 Excel/CSV 文件，字段名与 API 响应一致
+
+{If Dashboard = Y:}
+- [ ] **Step 6 — Dashboard 集成**
+  - 文件：`dashboard/`（按 {DASHBOARD_MODE} 方案）
+  - 测试：`tests/test_{PLATFORM_NAME}_step6.py`
+  - 通过标准：【需人工确认】`python main.py dashboard` 启动后浏览器可看到数据
 ```
 
-#### 7-2. `platforms/{PLATFORM_NAME}/platform.py`
+After writing `plan.md`, tell the user:
 
-Extend `BasePlatform`. Set flags based on confirmed conclusions:
-- `needs_browser_for_login()` → `True` if login required, `False` otherwise
-- `needs_headed_login()` → `True` if user reported CAPTCHA during login
-- `needs_browser_for_pull()` → `True` if `FETCH_STRATEGY` is `playwright-automation`, `False` if `httpx`
+```
+plan.md 已生成，开始逐步实现。每步完成并确认后将在 plan.md 中打勾。
+```
 
-#### 7-3. `platforms/{PLATFORM_NAME}/login.py`
+---
 
-Choose template based on confirmed login type.
+#### 7-1. Step 1 — 项目结构与平台注册
+
+Create files:
+- `platforms/{PLATFORM_NAME}/__init__.py`
+- `platforms/{PLATFORM_NAME}/platform.py` — extend `BasePlatform`, set flags:
+  - `needs_browser_for_login()` → `True` if login required
+  - `needs_headed_login()` → `True` if user reported CAPTCHA
+  - `needs_browser_for_pull()` → `True` if `FETCH_STRATEGY` is `playwright-automation`
+- Append `{PLATFORM_NAME}` block to `config.yaml`
+
+Then write `tests/test_{PLATFORM_NAME}_step1.py`:
+
+```python
+# 测试：平台注册是否正确
+import sys; sys.path.insert(0, ".")
+from platforms.{PLATFORM_NAME} import Platform
+
+p = Platform()
+print(f"platform name:  {p.name}")
+print(f"display name:   {p.display_name}")
+print(f"needs login:    {p.needs_browser_for_login()}")
+print(f"needs headed:   {p.needs_headed_login()}")
+print(f"needs browser:  {p.needs_browser_for_pull()}")
+print("Step 1 PASSED")
+```
+
+Run it:
+```bash
+.venv/bin/python tests/test_{PLATFORM_NAME}_step1.py
+```
+
+If output ends with `Step 1 PASSED` and no errors: update `plan.md` Step 1 checkbox to `[x]` and tell the user:
+```
+✓ Step 1 通过 — 平台结构正确
+```
+
+If it fails: fix the error, re-run, do not proceed until it passes.
+
+---
+
+#### 7-2. Step 2 — 登录与 Session 提取
+
+Create `platforms/{PLATFORM_NAME}/login.py` based on confirmed login type.
 
 **Template A — No login required:**
 ```python
@@ -861,7 +936,7 @@ async def do_login(page, cdp, account, password, config, tools):
     await page.fill("<password-selector>", password)
     if await page.locator("<captcha-selector>").is_visible(timeout=2000):
         await tools.show_window(cdp)
-        tools.notify(f"[{account}] Please complete the CAPTCHA")
+        tools.notify(f"[{account}] 请完成验证码")
         await page.locator("<captcha-success-selector>").wait_for(timeout=120_000)
         await tools.hide_window(cdp)
     await page.click("<submit-selector>")
@@ -871,64 +946,202 @@ async def do_login(page, cdp, account, password, config, tools):
         raise LoginFailedError(account)
 ```
 
-#### 7-4. `platforms/{PLATFORM_NAME}/api_client.py` (if FETCH_STRATEGY = httpx)
+Then write `tests/test_{PLATFORM_NAME}_step2.py` — opens a headed browser and attempts login using credentials from `config.yaml`:
 
-Generate an `httpx` wrapper based on `TARGET_API` and `LIVE_SESSION` credential fields:
-- Inject exact auth headers/cookies captured during analysis
-- If `TRIGGER_CONDITION` involves POST body params, include those exactly
-- Implement pagination loop with termination based on `STOP_CONDITION` (e.g. break when list is empty, `hasMore` is false, or a threshold field is crossed)
-- 429 exponential backoff retry (5s → 10s → 20s → 40s)
-- Token expiry detection (raise `TokenExpiredError`)
+```python
+# 测试：登录流程与 session 写入
+import asyncio, json, pathlib, sys, yaml
+sys.path.insert(0, ".")
 
-If `FETCH_STRATEGY` is `playwright-automation`, generate a `browser_scraper.py` instead:
-- Reuse cookies from session file
-- Simulate `TRIGGER_CONDITION` (click, scroll, form submit) before capturing response
-- Intercept the response using `page.on("response", ...)`
+SESSION_FILE = f".spider_session_{'{PLATFORM_NAME}'}.json"
 
-#### 7-5. `platforms/{PLATFORM_NAME}/jobs/__init__.py` + `jobs/default_job.py`
+async def test_login():
+    from playwright.async_api import async_playwright
+    config = yaml.safe_load(open("config.yaml"))
+    account_cfg = config["platforms"]["{PLATFORM_NAME}"]["accounts"][0]
+    account = account_cfg["name"]
+    password = account_cfg["password"]
 
-`default_job.py` implements:
-- `pull_data()` — call the API client or browser scraper, save raw data to file
-- `process_stats()` — read the file, aggregate with pandas, output Excel/CSV
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+        )
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        )
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        page = await context.new_page()
 
-#### 7-6. Append to `config.yaml`
+        from platforms.{PLATFORM_NAME}.login import do_login
+        await do_login(page, None, account, password, config["platforms"]["{PLATFORM_NAME}"], None)
 
-```yaml
-platforms:
-  {PLATFORM_NAME}:
-    enabled: true
-    display_name: {site name}
-    login_url: {LOGIN_PAGE_URL}
-    jobs:
-      - name: default_job
-        display_name: Data Pull
-        base_url: {TARGET_API base URL}
-        enabled: true
-    accounts:
-      - name: account1
-        password: ""
+        cookies = await context.cookies()
+        pathlib.Path(SESSION_FILE).write_text(json.dumps({"cookies": cookies}, ensure_ascii=False, indent=2))
+        print(f"Session saved: {len(cookies)} cookies")
+        print(f"Current URL:   {page.url}")
+        await browser.close()
+
+asyncio.run(test_login())
 ```
 
-#### 7-7. Post-generation checklist
+**This step requires manual confirmation.** After running the test, output:
+
+```
+Step 2 测试已启动。
+请观察浏览器窗口，确认登录是否成功完成，session 文件是否写入。
+确认通过请回复 Y，失败请描述问题。
+```
+
+**HARD STOP: wait for user to reply Y.**
+
+On Y: update `plan.md` Step 2 to `[x]`, tell the user `✓ Step 2 通过 — 登录成功，session 已写入`.
+
+---
+
+#### 7-3. Step 3 — API 调用与数据拉取（第一页）
+
+Create `platforms/{PLATFORM_NAME}/api_client.py` (if `FETCH_STRATEGY = httpx`) or `browser_scraper.py` (if `playwright-automation`):
+- Inject exact auth headers/cookies from `LIVE_SESSION`
+- Include `TRIGGER_CONDITION` params exactly as captured
+- For now: fetch **page 1 only** (pagination comes in Step 4)
+
+Then write `tests/test_{PLATFORM_NAME}_step3.py`:
+
+```python
+# 测试：拉取第一页数据
+import asyncio, json, sys
+sys.path.insert(0, ".")
+
+async def test_fetch():
+    from platforms.{PLATFORM_NAME}.api_client import {ClientClassName}
+    client = {ClientClassName}(session_file=".spider_session_{PLATFORM_NAME}.json")
+    data = await client.fetch_page(page=1)
+    print(f"Items count:  {len(data)}")
+    print(f"First item:   {json.dumps(data[0], ensure_ascii=False, indent=2)}")
+    assert len(data) > 0, "No data returned"
+    print("Step 3 PASSED")
+
+asyncio.run(test_fetch())
+```
+
+Run it:
+```bash
+.venv/bin/python tests/test_{PLATFORM_NAME}_step3.py
+```
+
+If `Step 3 PASSED` and data looks correct: update `plan.md` Step 3 to `[x]`, tell the user `✓ Step 3 通过 — 第一页数据拉取成功`.
+
+If the data fields look wrong, ask the user to confirm before proceeding.
+
+---
+
+#### 7-4. Step 4 — 分页与终止条件
+
+Update `api_client.py` to add the full pagination loop based on `STOP_CONDITION`.
+
+Then write `tests/test_{PLATFORM_NAME}_step4.py`:
+
+```python
+# 测试：分页抓取全量数据
+import asyncio, json, sys
+sys.path.insert(0, ".")
+
+async def test_paginate():
+    from platforms.{PLATFORM_NAME}.api_client import {ClientClassName}
+    client = {ClientClassName}(session_file=".spider_session_{PLATFORM_NAME}.json")
+    all_data = await client.fetch_all()
+    print(f"Total items fetched: {len(all_data)}")
+    print(f"Last item: {json.dumps(all_data[-1], ensure_ascii=False)}")
+    assert len(all_data) > 0
+    print("Step 4 PASSED")
+
+asyncio.run(test_paginate())
+```
+
+Run it:
+```bash
+.venv/bin/python tests/test_{PLATFORM_NAME}_step4.py
+```
+
+If `Step 4 PASSED` and total count is reasonable: update `plan.md` Step 4 to `[x]`, tell the user `✓ Step 4 通过 — 分页正常，共抓取 {N} 条`.
+
+---
+
+#### 7-5. Step 5 — 数据存储与处理
+
+Create `platforms/{PLATFORM_NAME}/jobs/__init__.py` and `jobs/default_job.py`:
+- `pull_data()` — call `fetch_all()`, save raw JSON to `data/{PLATFORM_NAME}/{account}/{date}_raw.json`
+- `process_stats()` — read raw file, build DataFrame with actual API field names, output Excel/CSV
+
+Then write `tests/test_{PLATFORM_NAME}_step5.py`:
+
+```python
+# 测试：数据写入与处理
+import asyncio, pathlib, sys
+sys.path.insert(0, ".")
+
+async def test_job():
+    from platforms.{PLATFORM_NAME}.jobs.default_job import DefaultJob
+    import yaml
+    config = yaml.safe_load(open("config.yaml"))
+    job = DefaultJob(config=config["platforms"]["{PLATFORM_NAME}"], account="test")
+    output_path = await job.pull_data()
+    print(f"Raw data saved: {output_path}")
+    assert pathlib.Path(output_path).exists()
+    stats_path = job.process_stats(output_path)
+    print(f"Stats saved:    {stats_path}")
+    assert pathlib.Path(stats_path).exists()
+    print("Step 5 PASSED")
+
+asyncio.run(test_job())
+```
+
+Run it:
+```bash
+.venv/bin/python tests/test_{PLATFORM_NAME}_step5.py
+```
+
+If `Step 5 PASSED`: update `plan.md` Step 5 to `[x]`, tell the user `✓ Step 5 通过 — 数据文件已生成`.
+
+---
+
+#### 7-6. Step 6 — Dashboard 集成（仅当 Dashboard = Y）
+
+Generate dashboard files per `DASHBOARD_MODE` rules from Step 5.
+
+**This step requires manual confirmation.** After generating files, tell the user:
+
+```
+Dashboard 文件已生成。请运行：
+  python main.py dashboard
+
+在浏览器中打开后，确认能看到平台数据和任务触发按钮。
+确认通过请回复 Y，失败请描述问题。
+```
+
+**HARD STOP: wait for user to reply Y.**
+
+On Y: update `plan.md` Step 6 to `[x]`, tell the user `✓ Step 6 通过 — Dashboard 运行正常`.
+
+---
+
+#### 7-7. 全部完成
+
+When all steps in `plan.md` are `[x]`:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Manual Verification Checklist
+  全部步骤完成 ✓
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-[ ] login.py — Verify selectors against the real login page:
-      - Username, password, submit, CAPTCHA selectors
+平台 {PLATFORM_NAME} 已实现并通过所有测试。
 
-[ ] api_client.py / browser_scraper.py — Confirm:
-      - Auth header name and format (Bearer vs raw token vs Cookie)
-      - Token expiry signal (401 / error code / redirect)
-      - Trigger condition is correctly simulated
-
-[ ] config.yaml — Fill in real credentials:
-      - accounts[].name and accounts[].password
-
-[ ] default_job.py — Verify JSON response field names:
-      - process_stats() column names are placeholders — check actual API response
+后续注意事项：
+  - 在 config.yaml 填入真实账号密码
+  - login.py 中的选择器需在真实登录页验证
+  - Token 过期时间：{token expiry risk from Step 6 plan}
+  - 完整计划：plan.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
@@ -949,4 +1162,7 @@ platforms:
 - **Step 3-D is a HARD STOP.** Ask about the stopping/termination condition and wait for the answer before proceeding to Step 4. Never assume the stop condition — always confirm with the user.
 - **Step 6 is a mandatory HARD STOP.** Display the complete plan in full, then wait for "Y". Do not abbreviate any section. Do not ask "should I proceed?" — the plan itself ends with that question. The dashboard layout rules shown in Step 5 are reference only — seeing them does NOT mean code generation should start.
 - **Never create any files, write any code, or call any write tool before the user types "Y" in Step 6.** This applies even if all analysis is complete and the plan is obvious.
+- **Step 7 must be executed one sub-step at a time.** Write the code for one step, run its test script, confirm it passes, update `plan.md` checkbox, then and only then move to the next step. Never implement multiple steps in one go.
+- **Steps requiring manual confirmation (Step 2 login test, Step 6 dashboard) are HARD STOPs.** Output the confirmation request, then wait for the user to reply Y before updating `plan.md` and continuing.
+- **`plan.md` must be created before any platform code is written.** Update each checkbox immediately after that step is confirmed — never batch-update multiple checkboxes at once.
 - Steps 2.5 through 4 are skipped entirely when Step 1 concludes Case A (data in HTML source).

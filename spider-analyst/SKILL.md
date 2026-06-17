@@ -102,11 +102,15 @@ Does this site require login to access the data?
   Y — Yes, login is required to see any data
   M — Login is optional, but gives access to more or better data (recommend login)
   N — No login needed, public data is sufficient
+  R — The site can only be automated via real browser interaction (heavy anti-bot, complex JS)
+      I want to reuse my own Chrome browser instead of launching a new one
   ? — I'm not sure, please test automatically
 ```
 
 **If user replies Y or M** → Treat identically: proceed to Step 2.5-LOGIN.
 Login always gives the most complete dataset and the most reliable session for API replay.
+
+**If user replies R** → Proceed to Step 2.5-LOGIN, but use Phase B-REUSE instead of Phase B.
 
 **If user replies N** → Proceed to Step 2.5-PUBLIC.
 
@@ -331,6 +335,110 @@ After the script exits, proceed directly to Phase C — do not wait for user inp
 **If the script output contains WARNING (error page on open):**
 - Do NOT ask the user for a new login URL — the URL is correct
 - The browser window stays open; the user navigates manually and the script continues monitoring
+
+---
+
+#### Phase B-REUSE: Connect to user's existing Chrome (only when Step 2 = R)
+
+**Do NOT use this phase for Y or M replies — only when the user explicitly chose R.**
+
+Instead of launching a new browser, Playwright connects to the user's real Chrome via CDP. This preserves the user's real fingerprint, existing login session, extensions, and cookies.
+
+**Step 1 — Tell the user to launch Chrome with remote debugging enabled:**
+
+```
+请先关闭所有 Chrome 窗口，然后用以下命令重新启动 Chrome：
+
+macOS：
+  /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+    --remote-debugging-port=9222 --no-first-run --no-default-browser-check
+
+Windows（在命令提示符中）：
+  "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+
+Linux：
+  google-chrome --remote-debugging-port=9222
+
+启动后请导航到目标页面并确保已登录，然后回复 "ready"。
+```
+
+**HARD STOP: wait for user to reply "ready".**
+
+**Step 2 — Verify CDP connection and extract session:**
+
+```python
+import asyncio, json, pathlib
+from playwright.async_api import async_playwright
+
+SESSION_FILE = ".spider_session.json"
+CDP_URL = "http://localhost:9222"
+
+async def connect_and_extract():
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.connect_over_cdp(CDP_URL)
+        except Exception as e:
+            print(f"[spider-analyst] ERROR: Cannot connect to Chrome — {e}")
+            print("[spider-analyst] Make sure Chrome was launched with --remote-debugging-port=9222")
+            return
+
+        contexts = browser.contexts
+        if not contexts:
+            print("[spider-analyst] ERROR: No browser context found.")
+            return
+
+        context = contexts[0]
+        pages = context.pages
+        print(f"[spider-analyst] Connected to Chrome. Open tabs: {len(pages)}")
+        for i, pg in enumerate(pages):
+            print(f"  [{i}] {pg.url}")
+
+        # Use the most recently active page
+        page = pages[-1]
+        print(f"[spider-analyst] Using page: {page.url}")
+
+        cookies = await context.cookies()
+        local_storage = await page.evaluate("""() => {
+            const r = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                r[k] = localStorage.getItem(k);
+            }
+            return r;
+        }""")
+        session_storage = await page.evaluate("""() => {
+            const r = {};
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const k = sessionStorage.key(i);
+                r[k] = sessionStorage.getItem(k);
+            }
+            return r;
+        }""")
+
+        session = {
+            "cookies": cookies,
+            "localStorage": local_storage,
+            "sessionStorage": session_storage,
+            "cdp_reuse": True,
+        }
+        pathlib.Path(SESSION_FILE).write_text(
+            json.dumps(session, ensure_ascii=False, indent=2)
+        )
+        print(f"[spider-analyst] Session saved: {len(cookies)} cookies, {len(local_storage)} localStorage keys")
+        # Do NOT close the browser — user is still using it
+        await browser.disconnect()
+
+asyncio.run(connect_and_extract())
+```
+
+If connection succeeds and session is saved: proceed to Phase C.
+
+If connection fails (port not open): tell the user the exact error and ask them to re-launch Chrome with the debugging flag before retrying.
+
+Store `REUSE_MODE = True`. This affects code generation in Step 7:
+- `login.py` → `check_session` always returns `True`; `do_login` connects via CDP instead of launching a new browser
+- `api_client.py` / `browser_scraper.py` → connects via `connect_over_cdp("http://localhost:9222")` instead of `chromium.launch()`
+- `setup.sh` → adds a note that Chrome must be running with `--remote-debugging-port=9222`
 
 ---
 
@@ -967,6 +1075,25 @@ def check_session(account): return True
 async def do_login(page, cdp, account, password, config, tools): pass
 ```
 
+**Template R — Reuse user's Chrome via CDP:**
+```python
+def check_session(account): return True  # session always assumed valid
+
+async def do_login(page, cdp, account, password, config, tools):
+    # No login needed — user manually logs in their own Chrome.
+    # Playwright connects via CDP in the scraper instead of launching a new browser.
+    pass
+```
+
+For `api_client.py` or `browser_scraper.py` when `REUSE_MODE = True`, connect via:
+```python
+browser = await p.chromium.connect_over_cdp("http://localhost:9222")
+context = browser.contexts[0]
+page = context.pages[-1]
+# Do NOT call browser.close() — user is still using this Chrome instance
+# Call browser.disconnect() instead when done
+```
+
 **Template B — Browser login with CAPTCHA wait:**
 ```python
 async def do_login(page, cdp, account, password, config, tools):
@@ -1213,6 +1340,7 @@ When all steps in `plan.md` are `[x]`:
 - **Playwright is installed on demand, not upfront.** Install it only when a browser is actually needed: at Step 2.5-LOGIN (when login is required) or Step 2.5-PUBLIC (when headless capture is needed for a public SPA). Never install before Step 2 confirms which path applies.
 - **Always install into the project-local `.venv`.** Never install into `/tmp/`, the global system Python, or any path outside the project root. Always run scripts with `.venv/bin/python`.
 - **Never ask the user to provide cookies, tokens, or session data manually.** If Playwright is missing, install it. There is no fallback path that bypasses Playwright for browser-based sites.
+- **When `REUSE_MODE = True`: never call `browser.close()` — always call `browser.disconnect()` to leave the user's Chrome running.**
 - **Never ask the user for a new or corrected login URL.** If the browser navigated to a 404/error page, that is the site's redirect behavior — the URL the user provided is correct. Re-open the browser with the same URL and tell the user to navigate manually.
 - **When login is required: the correct order is always — install Playwright → open headed browser → HARD STOP wait for "done" → extract full session → use session to capture API requests.** Never skip or reorder these phases.
 - **Step 2.5-LOGIN Phase B: output the "please log in" message as plain text BEFORE running the script.** The script auto-detects login completion and exits on its own — do not wait for user input after the script finishes. Proceed to Phase C immediately when the script exits.

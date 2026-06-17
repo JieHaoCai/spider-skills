@@ -980,86 +980,86 @@ Every analysis step (1 through 5) must be complete before this step. Display the
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Spider Analyst — Implementation Plan
+  Spider Analyst — 实现计划
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Target:        {$ARGUMENTS}
-Platform name: {PLATFORM_NAME}
-Target data:   {TARGET_DATA}
+目标地址：    {$ARGUMENTS}
+平台名称：    {PLATFORM_NAME}
+抓取数据：    {TARGET_DATA}
 
 ──────────────────────────────────────
-[Analysis Results]
+【分析结果】
 ──────────────────────────────────────
-  Data source:        {Case A/B/C/D — brief description}
-                      API endpoint: {TARGET_API}
-                      Method: {TARGET_METHOD}
-                      Evidence: {replay test result}
+  数据来源：      {数据在 HTML 中 / SPA 接口 / 需登录接口}
+                  接口地址：{TARGET_API}
+                  请求方式：{TARGET_METHOD}
+                  验证依据：{replay test result}
 
-  Login required:     {yes / no}
-                      Evidence: {user confirmed / unauthenticated replay 401}
+  是否需要登录：  {是 / 否}
+                  验证依据：{用户确认 / 未授权请求返回 401}
 
-  CAPTCHA type:       {slider / image / qrcode / sms / none — as reported by user during login}
+  验证码类型：    {滑块 / 图片 / 二维码 / 短信 / 无}
 
-  Trigger condition:  {description of interaction needed, or "none — loads on page open"}
+  触发条件：      {触发数据加载所需的交互描述，或"无，页面打开自动加载"}
 
-  Target fields:      {TARGET_FIELDS — field names to extract, or "all"}
-  Output format:      {OUTPUT_FORMAT — csv / json / xlsx}
-  Stop condition:     {STOP_CONDITION — e.g. "empty list", "hasMore=false", "rank > 500"}
+  提取字段：      {TARGET_FIELDS}
+  保存格式：      {OUTPUT_FORMAT}
+  终止条件：      {STOP_CONDITION}
 
-  API reversible:     {yes / no}
-                      Fetch strategy: {httpx direct call / Playwright browser automation}
-                      Evidence: {replay test HTTP status and response preview}
-
-──────────────────────────────────────
-[Recommended Approach]
-──────────────────────────────────────
-  Login strategy:     {fully automated / headed browser + user completes CAPTCHA / not needed}
-  Data fetching:      {httpx direct API call / Playwright browser automation}
-  Trigger handling:   {description of how to replicate the trigger condition in code}
-  Session management: {session.json + expiry check / not needed}
-  Scheduling:         {APScheduler daily cron / manual trigger only}
+  接口可逆性：    {可逆 / 不可逆}
+                  抓取策略：{httpx 直接调用 / Playwright 浏览器模拟}
+                  验证依据：{动态参数分析结论 / 重放测试状态码}
 
 ──────────────────────────────────────
-[Files to Create]
+【推荐方案】
+──────────────────────────────────────
+  登录方式：      {全自动 / 有头浏览器 + 人工完成验证码 / 不需要登录}
+  数据抓取：      {httpx 直接调用接口 / Playwright 浏览器模拟}
+  触发处理：      {如何在代码中复现触发条件}
+  Session 管理：  {session.json + 过期检测 / 不需要}
+  调度方式：      {APScheduler 每日定时 / 手动触发}
+
+──────────────────────────────────────
+【待创建文件】
 ──────────────────────────────────────
   platforms/{PLATFORM_NAME}/
   ├── __init__.py
-  ├── platform.py        ← BasePlatform subclass
-  ├── login.py           ← Login + session extraction
-  ├── api_client.py      ← httpx wrapper (if fetch strategy = httpx)
+  ├── platform.py        ← BasePlatform 子类
+  ├── login.py           ← 登录 + Session 提取
+  ├── api_client.py      ← httpx 封装（抓取策略为 httpx 时）
   └── jobs/
       ├── __init__.py
       └── default_job.py ← pull_data + process_stats
 
-  config.yaml            ← append {PLATFORM_NAME} block
+  config.yaml            ← 追加 {PLATFORM_NAME} 配置块
 
-  {If Dashboard = Y:}
-  dashboard/             ← FastAPI + React (skipped if already exists)
-
-──────────────────────────────────────
-[Key Parameters]
-──────────────────────────────────────
-  Login page URL:        {LOGIN_PAGE_URL}
-  Target API:            {TARGET_API}
-  Auth credentials:      {cookie names / token header names from LIVE_SESSION}
-  Trigger condition:     {TRIGGER_CONDITION}
-  Target fields:         {TARGET_FIELDS}
-  Output format:         {OUTPUT_FORMAT}
-  Stop condition:        {STOP_CONDITION}
-  Signing params:        {SIGNING_PARAMS or "none detected"}
+  {如果 Dashboard = Y：}
+  dashboard/             ← FastAPI + React（已存在则跳过）
 
 ──────────────────────────────────────
-[Risks]
+【关键参数】
 ──────────────────────────────────────
-  {Concrete risks from analysis, e.g.:
-   - Token expires every 24h — daily re-login needed
-   - CAPTCHA on every login — manual intervention required
-   - Signing params detected — httpx replay may break if algorithm changes
-   - Trigger requires click interaction — must simulate in Playwright}
+  登录页地址：    {LOGIN_PAGE_URL}
+  目标接口：      {TARGET_API}
+  认证凭据：      {LIVE_SESSION 中的 cookie 名 / token 请求头名}
+  触发条件：      {TRIGGER_CONDITION}
+  提取字段：      {TARGET_FIELDS}
+  保存格式：      {OUTPUT_FORMAT}
+  终止条件：      {STOP_CONDITION}
+  签名参数：      {SIGNING_PARAMS 或"未检测到"}
+
+──────────────────────────────────────
+【风险提示】
+──────────────────────────────────────
+  {根据分析填写具体风险，例如：
+   - Token 每 24 小时过期，需每日重新登录
+   - 每次登录都有验证码，需人工介入
+   - 检测到签名参数，若算法变更 httpx 重放可能失效
+   - 触发条件需点击操作，必须在 Playwright 中模拟}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Reply Y to confirm — code generation starts immediately.
-Reply N or describe any change to revise the plan first.
+回复 Y 确认，立即开始生成代码。
+回复 N 或描述修改意见，重新调整计划。
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 

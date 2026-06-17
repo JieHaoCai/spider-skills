@@ -202,135 +202,15 @@ What is the login page URL?
 
 Store the answer as `LOGIN_PAGE_URL` (default to `$ARGUMENTS`).
 
-**IMPORTANT — output this message as plain text BEFORE making any tool call or running any script:**
+Run the pre-built tool script:
 
-```
-Opening browser at: {LOGIN_PAGE_URL}
-
-Please log in manually — complete any CAPTCHA, SMS code, or QR scan as needed.
-The browser will close automatically once login is detected (or after 10 minutes).
+```bash
+.venv/bin/python tools/login_browser.py "<LOGIN_PAGE_URL>"
 ```
 
-Then run the following script. It opens a visible browser, monitors for login completion, saves the session, and exits automatically:
+The script opens a headed browser, prints the login prompt in Chinese, monitors URL changes, auto-detects login success (stable non-login URL for 9s), saves `.spider_session.json`, and exits.
 
-```python
-import asyncio, json, pathlib
-from playwright.async_api import async_playwright
-
-LOGIN_URL = "<LOGIN_PAGE_URL>"
-SESSION_FILE = ".spider_session.json"
-LOGIN_SIGNALS = ("login", "signin", "sign_in", "account")
-
-def is_login_page(url):
-    u = url.lower()
-    return any(s in u for s in LOGIN_SIGNALS)
-
-def is_error_page(url, title):
-    return "404" in url or "404" in title or "not found" in title.lower()
-
-async def open_and_wait(login_url):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--no-sandbox",
-            ],
-        )
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900},
-            locale="zh-CN",
-        )
-        await context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        page = await context.new_page()
-
-        try:
-            await page.goto(login_url, wait_until="load", timeout=30000)
-        except Exception as e:
-            print(f"[spider-analyst] Page load warning: {e}")
-
-        initial_url = page.url
-        initial_title = await page.title()
-        print()
-        print("=" * 60)
-        print("  浏览器已打开，请立即登录")
-        print("  如有验证码、短信验证或扫码，请手动完成")
-        print("  登录成功后浏览器将自动关闭")
-        print("=" * 60)
-        print(f"  当前地址：{initial_url}")
-        print(f"  页面标题：{initial_title}")
-        print()
-
-        if is_error_page(initial_url, initial_title):
-            print("[spider-analyst] WARNING: Site redirected to an error page. Please navigate to the login page manually in the browser window.")
-
-        # Poll until login detected or timeout
-        last_url = initial_url
-        stable_non_login_count = 0
-
-        for tick in range(200):  # 200 × 3s = 600s = 10 min
-            await asyncio.sleep(3)
-            try:
-                current_url = page.url
-                title = await page.title()
-            except Exception:
-                print("[spider-analyst] Browser closed by user — extracting session.")
-                break
-
-            if current_url != last_url:
-                print(f"[spider-analyst] URL: {current_url} | title: {title}")
-                if is_error_page(current_url, title):
-                    print("[spider-analyst] WARNING: Error page detected. Please navigate manually.")
-                last_url = current_url
-
-            # Detect successful login: URL left login page and is not an error page
-            if not is_login_page(current_url) and not is_error_page(current_url, title):
-                stable_non_login_count += 1
-                if stable_non_login_count >= 3:  # stable for 9s
-                    print("[spider-analyst] Login detected — saving session.")
-                    break
-            else:
-                stable_non_login_count = 0
-
-        print(f"[spider-analyst] Final URL: {page.url}")
-
-        # Extract full session
-        cookies = await context.cookies()
-        local_storage = await page.evaluate("""() => {
-            const r = {};
-            for (let i = 0; i < localStorage.length; i++) {
-                const k = localStorage.key(i);
-                r[k] = localStorage.getItem(k);
-            }
-            return r;
-        }""")
-        session_storage = await page.evaluate("""() => {
-            const r = {};
-            for (let i = 0; i < sessionStorage.length; i++) {
-                const k = sessionStorage.key(i);
-                r[k] = sessionStorage.getItem(k);
-            }
-            return r;
-        }""")
-        session = {
-            "cookies": cookies,
-            "localStorage": local_storage,
-            "sessionStorage": session_storage,
-        }
-        pathlib.Path(SESSION_FILE).write_text(
-            json.dumps(session, ensure_ascii=False, indent=2)
-        )
-        print(f"[spider-analyst] Session saved to {SESSION_FILE}")
-        await browser.close()
-
-asyncio.run(open_and_wait(LOGIN_URL))
-```
-
-After the script exits, proceed directly to Phase C — do not wait for user input.
+After the script exits (output line starts with `SESSION_SAVED`), proceed directly to Phase C.
 
 **If the script output contains WARNING (error page on open):**
 - Do NOT ask the user for a new login URL — the URL is correct
@@ -366,72 +246,13 @@ Linux：
 
 **Step 2 — Verify CDP connection and extract session:**
 
-```python
-import asyncio, json, pathlib
-from playwright.async_api import async_playwright
-
-SESSION_FILE = ".spider_session.json"
-CDP_URL = "http://localhost:9222"
-
-async def connect_and_extract():
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.connect_over_cdp(CDP_URL)
-        except Exception as e:
-            print(f"[spider-analyst] ERROR: Cannot connect to Chrome — {e}")
-            print("[spider-analyst] Make sure Chrome was launched with --remote-debugging-port=9222")
-            return
-
-        contexts = browser.contexts
-        if not contexts:
-            print("[spider-analyst] ERROR: No browser context found.")
-            return
-
-        context = contexts[0]
-        pages = context.pages
-        print(f"[spider-analyst] Connected to Chrome. Open tabs: {len(pages)}")
-        for i, pg in enumerate(pages):
-            print(f"  [{i}] {pg.url}")
-
-        # Use the most recently active page
-        page = pages[-1]
-        print(f"[spider-analyst] Using page: {page.url}")
-
-        cookies = await context.cookies()
-        local_storage = await page.evaluate("""() => {
-            const r = {};
-            for (let i = 0; i < localStorage.length; i++) {
-                const k = localStorage.key(i);
-                r[k] = localStorage.getItem(k);
-            }
-            return r;
-        }""")
-        session_storage = await page.evaluate("""() => {
-            const r = {};
-            for (let i = 0; i < sessionStorage.length; i++) {
-                const k = sessionStorage.key(i);
-                r[k] = sessionStorage.getItem(k);
-            }
-            return r;
-        }""")
-
-        session = {
-            "cookies": cookies,
-            "localStorage": local_storage,
-            "sessionStorage": session_storage,
-            "cdp_reuse": True,
-        }
-        pathlib.Path(SESSION_FILE).write_text(
-            json.dumps(session, ensure_ascii=False, indent=2)
-        )
-        print(f"[spider-analyst] Session saved: {len(cookies)} cookies, {len(local_storage)} localStorage keys")
-        # Do NOT close the browser — user is still using it
-        await browser.disconnect()
-
-asyncio.run(connect_and_extract())
+```bash
+.venv/bin/python tools/connect_cdp.py
 ```
 
-If connection succeeds and session is saved: proceed to Phase C.
+The script connects to Chrome at `localhost:9222`, lists all open tabs, extracts cookies/localStorage/sessionStorage from the last active tab, and saves `.spider_session.json` with `cdp_reuse: true`.
+
+If output line starts with `SESSION_SAVED`: proceed to Phase C.
 
 If connection fails (port not open): tell the user the exact error and ask them to re-launch Chrome with the debugging flag before retrying.
 
@@ -442,35 +263,13 @@ Store `REUSE_MODE = True`. This affects code generation in Step 7:
 
 ---
 
-#### Phase C: Read and summarize the extracted session (only after "done")
+#### Phase C: Read and summarize the extracted session
 
-```python
-import json, pathlib
-
-session = json.loads(pathlib.Path(".spider_session.json").read_text())
-
-print(f"Total cookies: {len(session['cookies'])}")
-print(f"Total localStorage keys: {len(session['localStorage'])}")
-print(f"Total sessionStorage keys: {len(session['sessionStorage'])}")
-print()
-
-# Print all cookies (name + truncated value)
-print("=== Cookies ===")
-for c in session["cookies"]:
-    print(f"  {c['name']} = {str(c['value'])[:40]}{'...' if len(str(c['value'])) > 40 else ''}")
-
-print()
-print("=== localStorage ===")
-for k, v in session["localStorage"].items():
-    print(f"  {k} = {str(v)[:40]}{'...' if len(str(v)) > 40 else ''}")
-
-print()
-print("=== sessionStorage ===")
-for k, v in session["sessionStorage"].items():
-    print(f"  {k} = {str(v)[:40]}{'...' if len(str(v)) > 40 else ''}")
+```bash
+.venv/bin/python tools/show_session.py
 ```
 
-Store as `LIVE_SESSION`. Then tell the user:
+Parse the output to extract cookie names and localStorage keys. Store as `LIVE_SESSION`. Then tell the user:
 
 ```
 Login session captured successfully:
@@ -491,64 +290,13 @@ Proceed to Step 3.
 
 Install into `.venv` the same way as Phase A in Step 2.5-LOGIN (check for `.venv`, create if missing, install playwright).
 
-Then run a headless capture:
+Then run:
 
-```python
-import asyncio, json
-from playwright.async_api import async_playwright
-
-TARGET_URL = "$ARGUMENTS"
-
-async def capture_public():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--no-sandbox",
-            ],
-        )
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900},
-            locale="zh-CN",
-        )
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        page = await context.new_page()
-        captured = []
-
-        async def on_response(response):
-            if response.request.resource_type not in ("xhr", "fetch"):
-                return
-            try:
-                body = await response.json()
-            except Exception:
-                body = None
-            captured.append({
-                "url": response.url,
-                "method": response.request.method,
-                "status": response.status,
-                "request_headers": dict(response.request.headers),
-                "body_preview": json.dumps(body, ensure_ascii=False)[:300] if body else None,
-            })
-
-        page.on("response", on_response)
-        await page.goto(TARGET_URL, wait_until="networkidle", timeout=30000)
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(2000)
-        await context.close()
-        await browser.close()
-        return captured
-
-captured = asyncio.run(capture_public())
-for i, r in enumerate(captured):
-    print(f"[{i}] {r['method']} {r['status']} {r['url']}")
-    if r["body_preview"]:
-        print(f"     preview: {r['body_preview'][:150]}")
+```bash
+.venv/bin/python tools/capture_requests.py "$ARGUMENTS"
 ```
 
-Then proceed to Step 3 (with no `LIVE_SESSION`).
+No session file is passed — the tool runs headless without cookies. Then proceed to Step 3 (with no `LIVE_SESSION`).
 
 ---
 
@@ -560,85 +308,21 @@ Then proceed to Step 3 (with no `LIVE_SESSION`).
 
 #### Step 3-A: Capture all requests using the real session
 
-Run the following script using `LIVE_SESSION` credentials. If no login is required, omit the cookie injection:
+```bash
+.venv/bin/python tools/capture_requests.py "$ARGUMENTS"
+```
 
-```python
-import asyncio, json, pathlib
-from playwright.async_api import async_playwright
+The tool injects session from `.spider_session.json` (cookies + localStorage + sessionStorage), opens the target page headless, scrolls to trigger lazy loads, captures all XHR/fetch responses, saves full results to `.spider_requests.json`, and prints a compact summary (index, method, status, url, 120-char response preview).
 
-TARGET_URL = "$ARGUMENTS"
-SESSION_FILE = ".spider_session.json"
+To read the full response body of a specific request after the user identifies it:
 
-async def capture_with_session():
-    session = json.loads(pathlib.Path(SESSION_FILE).read_text()) if pathlib.Path(SESSION_FILE).exists() else {}
-    cookies = session.get("cookies", [])
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--no-sandbox",
-            ],
-        )
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900},
-            locale="zh-CN",
-        )
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        if cookies:
-            await context.add_cookies(cookies)
-        page = await context.new_page()
-
-        # Inject localStorage and sessionStorage if present
-        async def inject_storage():
-            for k, v in session.get("localStorage", {}).items():
-                await page.evaluate(f"localStorage.setItem({json.dumps(k)}, {json.dumps(v)})")
-            for k, v in session.get("sessionStorage", {}).items():
-                await page.evaluate(f"sessionStorage.setItem({json.dumps(k)}, {json.dumps(v)})")
-
-        captured = []
-
-        async def on_response(response):
-            if response.request.resource_type not in ("xhr", "fetch"):
-                return
-            try:
-                body = await response.json()
-            except Exception:
-                body = None
-            auth_headers = {k: v for k, v in response.request.headers.items()
-                            if k.lower() in ("authorization", "cookie", "x-token",
-                                             "x-auth-token", "x-access-token")}
-            captured.append({
-                "url": response.url,
-                "method": response.request.method,
-                "status": response.status,
-                "auth_headers": auth_headers,
-                "request_body": response.request.post_data,
-                "body_preview": json.dumps(body, ensure_ascii=False)[:400] if body else None,
-            })
-
-        page.on("response", on_response)
-        await page.goto(TARGET_URL, wait_until="load", timeout=30000)
-        await inject_storage()
-        await page.wait_for_timeout(3000)
-        # Scroll to trigger lazy-loaded requests
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(2000)
-        await browser.close()
-        return captured
-
-captured = asyncio.run(capture_with_session())
-for i, r in enumerate(captured):
-    print(f"[{i}] {r['method']} {r['status']} {r['url']}")
-    if r["request_body"]:
-        print(f"     request body: {r['request_body'][:150]}")
-    if r["body_preview"]:
-        print(f"     response preview: {r['body_preview'][:150]}")
-    if r["auth_headers"]:
-        print(f"     auth headers: {list(r['auth_headers'].keys())}")
+```bash
+.venv/bin/python -c "
+import json
+requests = json.load(open('.spider_requests.json'))
+r = requests[<INDEX>]
+print(json.dumps(json.loads(r['response_body']), ensure_ascii=False, indent=2))
+"
 ```
 
 ---
@@ -782,31 +466,46 @@ Store as `STOP_CONDITION`. Include the exact field name and value from the API r
 
 #### Step 4-A: Capture the same request multiple times to observe parameter variance
 
-Trigger the target page/interaction **3 times** (reload or repeat the trigger condition) to collect 3 samples of `TARGET_API`. Use the Step 3-A capture script again, appending results.
+Trigger the target page/interaction **twice** (reload or repeat the trigger condition) to collect 2 samples of `TARGET_API`. Run the capture tool twice with different output files:
 
-For each sample, record:
-- Full URL including all query parameters
-- Full request body (if POST)
-- All request headers
+```bash
+.venv/bin/python tools/capture_requests.py "$ARGUMENTS" .spider_session.json .spider_requests_s1.json
+.venv/bin/python tools/capture_requests.py "$ARGUMENTS" .spider_session.json .spider_requests_s2.json
+```
 
-Then compare the 3 samples side by side and classify every parameter:
+Then read the `TARGET_API` entry from both files and compare every parameter:
 
-| Parameter | Sample 1 | Sample 2 | Sample 3 | Classification |
-|-----------|----------|----------|----------|----------------|
-| `page` | 1 | 1 | 1 | static |
-| `timestamp` | 1718000001 | 1718000045 | 1718000089 | dynamic — time-based |
-| `sign` | a3f9... | 7c2b... | 91de... | dynamic — changes every request |
-| `token` | eyJh... | eyJh... | eyJh... | static — session token |
+```bash
+.venv/bin/python -c "
+import json
+s1 = json.load(open('.spider_requests_s1.json'))
+s2 = json.load(open('.spider_requests_s2.json'))
+idx = <TARGET_INDEX>
+print('Sample 1:', s1[idx]['url'])
+print('Sample 2:', s2[idx]['url'])
+print('Body 1:', s1[idx].get('request_body'))
+print('Body 2:', s2[idx].get('request_body'))
+"
+```
+
+Classify every parameter:
+
+| Parameter | Sample 1 | Sample 2 | Classification |
+|-----------|----------|----------|----------------|
+| `page` | 1 | 1 | static |
+| `timestamp` | 1718000001 | 1718000045 | dynamic — time-based |
+| `sign` | a3f9... | 7c2b... | dynamic — changes every request |
+| `token` | eyJh... | eyJh... | static — session token |
 
 Report to the user:
 
 ```
-接口参数分析（共采集 3 次请求）：
+接口参数分析（共采集 2 次请求）：
 
   URL：{TARGET_API base path}
 
   参数对比：
-  {table of all params with 3 sample values and classification}
+  {table of all params with 2 sample values and classification}
 
   动态参数（每次请求都变化）：{list}
   静态参数（保持不变）：{list}

@@ -253,12 +253,12 @@ async def open_and_wait(login_url):
         initial_title = await page.title()
         print()
         print("=" * 60)
-        print("  Browser is open — please log in now")
-        print("  Complete any CAPTCHA, SMS code, or QR scan as needed.")
-        print("  The browser will close automatically after login.")
+        print("  浏览器已打开，请立即登录")
+        print("  如有验证码、短信验证或扫码，请手动完成")
+        print("  登录成功后浏览器将自动关闭")
         print("=" * 60)
-        print(f"  URL: {initial_url}")
-        print(f"  Title: {initial_title}")
+        print(f"  当前地址：{initial_url}")
+        print(f"  页面标题：{initial_title}")
         print()
 
         if is_error_page(initial_url, initial_title):

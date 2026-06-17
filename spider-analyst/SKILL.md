@@ -198,7 +198,16 @@ What is the login page URL?
 
 Store the answer as `LOGIN_PAGE_URL` (default to `$ARGUMENTS`).
 
-Run the following script. It opens a visible browser, monitors URL changes without auto-closing, and saves the full session after timeout or user completion:
+**IMPORTANT — output this message as plain text BEFORE making any tool call or running any script:**
+
+```
+Opening browser at: {LOGIN_PAGE_URL}
+
+Please log in manually — complete any CAPTCHA, SMS code, or QR scan as needed.
+The browser will close automatically once login is detected (or after 10 minutes).
+```
+
+Then run the following script. It opens a visible browser, monitors for login completion, saves the session, and exits automatically:
 
 ```python
 import asyncio, json, pathlib
@@ -206,6 +215,14 @@ from playwright.async_api import async_playwright
 
 LOGIN_URL = "<LOGIN_PAGE_URL>"
 SESSION_FILE = ".spider_session.json"
+LOGIN_SIGNALS = ("login", "signin", "sign_in", "account")
+
+def is_login_page(url):
+    u = url.lower()
+    return any(s in u for s in LOGIN_SIGNALS)
+
+def is_error_page(url, title):
+    return "404" in url or "404" in title or "not found" in title.lower()
 
 async def open_and_wait(login_url):
     async with async_playwright() as p:
@@ -222,8 +239,9 @@ async def open_and_wait(login_url):
             viewport={"width": 1440, "height": 900},
             locale="zh-CN",
         )
-        # Override navigator.webdriver to avoid bot detection
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        await context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
         page = await context.new_page()
 
         try:
@@ -233,33 +251,40 @@ async def open_and_wait(login_url):
 
         initial_url = page.url
         initial_title = await page.title()
-        print(f"[spider-analyst] Browser opened.")
-        print(f"[spider-analyst] Initial URL:   {initial_url}")
-        print(f"[spider-analyst] Initial title: {initial_title}")
+        print(f"[spider-analyst] Browser opened. URL: {initial_url} | title: {initial_title}")
 
-        if "404" in initial_url or "404" in initial_title or "not found" in initial_title.lower():
-            print("[spider-analyst] WARNING: Site redirected to a 404/error page on open.")
-            print("[spider-analyst] Browser remains open — please navigate to the login page manually.")
+        if is_error_page(initial_url, initial_title):
+            print("[spider-analyst] WARNING: Site redirected to an error page. Please navigate to the login page manually in the browser window.")
 
-        print("[spider-analyst] Monitoring URL changes. Browser will stay open for 10 min.")
-
+        # Poll until login detected or timeout
         last_url = initial_url
-        try:
-            for _ in range(200):  # 200 × 3s = 600s = 10 min
-                await asyncio.sleep(3)
-                current_url = page.url
-                if current_url != last_url:
-                    title = await page.title()
-                    print(f"[spider-analyst] URL changed: {current_url} | title: {title}")
-                    if "404" in current_url or "404" in title or "not found" in title.lower():
-                        print("[spider-analyst] WARNING: Redirected to error page. Please navigate manually.")
-                    last_url = current_url
-        except Exception as e:
-            print(f"[spider-analyst] Monitor ended early: {e}")
+        stable_non_login_count = 0
 
-        final_url = page.url
-        final_title = await page.title()
-        print(f"[spider-analyst] Session capture starting. Final URL: {final_url} | title: {final_title}")
+        for tick in range(200):  # 200 × 3s = 600s = 10 min
+            await asyncio.sleep(3)
+            try:
+                current_url = page.url
+                title = await page.title()
+            except Exception:
+                print("[spider-analyst] Browser closed by user — extracting session.")
+                break
+
+            if current_url != last_url:
+                print(f"[spider-analyst] URL: {current_url} | title: {title}")
+                if is_error_page(current_url, title):
+                    print("[spider-analyst] WARNING: Error page detected. Please navigate manually.")
+                last_url = current_url
+
+            # Detect successful login: URL left login page and is not an error page
+            if not is_login_page(current_url) and not is_error_page(current_url, title):
+                stable_non_login_count += 1
+                if stable_non_login_count >= 3:  # stable for 9s
+                    print("[spider-analyst] Login detected — saving session.")
+                    break
+            else:
+                stable_non_login_count = 0
+
+        print(f"[spider-analyst] Final URL: {page.url}")
 
         # Extract full session
         cookies = await context.cookies()
@@ -293,29 +318,11 @@ async def open_and_wait(login_url):
 asyncio.run(open_and_wait(LOGIN_URL))
 ```
 
-After launching this script, immediately output:
+After the script exits, proceed directly to Phase C — do not wait for user input.
 
-```
-Browser window opened at: {LOGIN_PAGE_URL}
-
-If the browser shows a 404 or error page: the site redirected automatically.
-Please navigate to the login page manually within the browser window — the URL you provided is correct.
-
-Complete any CAPTCHA, SMS code, or QR scan as needed.
-Once you can see the main page and are fully logged in, type "done".
-```
-
-**HARD STOP: Do not run any further code or proceed to Phase C until the user types "done".**
-
-**If Phase B script output contains WARNING (404/error redirect):**
-- Do NOT ask the user for a new login URL — the URL is correct, the site redirects it
-- Tell the user: "The browser opened but the site redirected to an error page. The browser window is still open — please navigate to the login page manually and complete login, then type done."
-- Continue waiting for "done" as normal
-
-**If the user reports the browser closed before they could log in:**
-- Do NOT ask for a new URL
-- Re-run Phase B immediately with the same `LOGIN_PAGE_URL`
-- Tell the user: "Re-opening the browser. The previous window closed — please log in in the new window and type done when finished."
+**If the script output contains WARNING (error page on open):**
+- Do NOT ask the user for a new login URL — the URL is correct
+- The browser window stays open; the user navigates manually and the script continues monitoring
 
 ---
 
@@ -899,7 +906,7 @@ platforms:
 - **Never ask the user to provide cookies, tokens, or session data manually.** If Playwright is missing, install it. There is no fallback path that bypasses Playwright for browser-based sites.
 - **Never ask the user for a new or corrected login URL.** If the browser navigated to a 404/error page, that is the site's redirect behavior — the URL the user provided is correct. Re-open the browser with the same URL and tell the user to navigate manually.
 - **When login is required: the correct order is always — install Playwright → open headed browser → HARD STOP wait for "done" → extract full session → use session to capture API requests.** Never skip or reorder these phases.
-- **Step 2.5-LOGIN Phase B is a HARD STOP.** After launching the browser script, output the "please log in" message and wait for "done". Do not run Phase C or any subsequent step until the user types "done".
+- **Step 2.5-LOGIN Phase B: output the "please log in" message as plain text BEFORE running the script.** The script auto-detects login completion and exits on its own — do not wait for user input after the script finishes. Proceed to Phase C immediately when the script exits.
 - **Step 3-B is a HARD STOP.** Display all captured requests and wait for the user to identify the target endpoint. Do not proceed to Step 3-C until answered.
 - **Step 3-C is a HARD STOP.** Ask about trigger conditions and wait for the answer before proceeding to Step 4.
 - **Step 6 is a mandatory HARD STOP.** Display the complete plan in full, then wait for "Y". Do not abbreviate any section. Do not ask "should I proceed?" — the plan itself ends with that question.

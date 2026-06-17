@@ -870,10 +870,49 @@ Before writing any platform code, create `plan.md` in the project root with all 
   - 通过标准：【需人工确认】`python main.py dashboard` 启动后浏览器可看到数据
 ```
 
-After writing `plan.md`, tell the user:
+Also create `setup.sh` in the project root (skip if it already exists):
+
+```bash
+#!/usr/bin/env bash
+set -e
+
+echo "=== Spider 环境初始化 ==="
+
+# 1. 创建虚拟环境
+if [ ! -d ".venv" ]; then
+  echo "[1/4] 创建虚拟环境..."
+  python3 -m venv .venv
+else
+  echo "[1/4] 虚拟环境已存在，跳过"
+fi
+
+# 2. 安装 Python 依赖
+echo "[2/4] 安装依赖..."
+.venv/bin/pip install -q -r requirements.txt
+
+# 3. 安装 Playwright 浏览器
+echo "[3/4] 安装 Playwright Chromium..."
+.venv/bin/playwright install chromium
+
+# 4. 完成
+echo "[4/4] 初始化完成！"
+echo ""
+echo "启动爬虫："
+echo "  .venv/bin/python main.py run --platform {PLATFORM_NAME}"
+echo ""
+echo "启动 Dashboard（如已生成）："
+echo "  .venv/bin/python main.py dashboard"
+```
+
+Make it executable:
+```bash
+chmod +x setup.sh
+```
+
+After writing both files, tell the user:
 
 ```
-plan.md 已生成，开始逐步实现。每步完成并确认后将在 plan.md 中打勾。
+plan.md 和 setup.sh 已生成，开始逐步实现。每步完成并确认后将在 plan.md 中打勾。
 ```
 
 ---
@@ -1137,11 +1176,31 @@ When all steps in `plan.md` are `[x]`:
 
 平台 {PLATFORM_NAME} 已实现并通过所有测试。
 
+──────────────────────────────────────
+快速开始（在新机器或新环境首次使用）：
+
+  bash setup.sh
+
+这会自动完成：
+  ① 创建 Python 虚拟环境（.venv/）
+  ② 安装所有依赖（requirements.txt）
+  ③ 安装 Playwright Chromium 浏览器
+
+──────────────────────────────────────
+日常使用：
+
+  # 执行爬取
+  .venv/bin/python main.py run --platform {PLATFORM_NAME}
+
+  # 启动 Dashboard（如已生成）
+  .venv/bin/python main.py dashboard
+
+──────────────────────────────────────
 后续注意事项：
   - 在 config.yaml 填入真实账号密码
   - login.py 中的选择器需在真实登录页验证
-  - Token 过期时间：{token expiry risk from Step 6 plan}
-  - 完整计划：plan.md
+  - Token 过期信号：{token expiry risk from plan}
+  - 完整实现计划：plan.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```

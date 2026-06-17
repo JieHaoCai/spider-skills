@@ -667,7 +667,41 @@ or describe it if none of the above look right.
 
 Store the confirmed request as `TARGET_API`, `TARGET_METHOD`, `TARGET_AUTH_HEADERS`, `TARGET_REQUEST_BODY`.
 
-Then immediately display the response body of the selected request in full (not truncated), and ask:
+Before showing the response to the user, validate it automatically:
+
+**Response is INVALID if any of the following are true:**
+- HTTP status is not 200
+- Body is empty or not JSON
+- Body is a string containing "login", "signin", "401", "403", "unauthorized", "redirect"
+- Body is a JSON object with zero keys, or a JSON array with zero items
+- Body looks like an HTML page (`<html`, `<!DOCTYPE`)
+
+**If INVALID**, do NOT ask the user to confirm fields. Instead output:
+
+```
+⚠️  接口 [{index}] 返回的数据无效：
+
+  状态码：{http_status}
+  内容预览：{first 300 chars of body}
+
+  可能原因：
+    - Session 未正确注入（cookie 已过期或被拒绝）
+    - 该接口需要额外的请求头或签名参数
+    - 抓包时页面尚未触发该请求（需要交互触发）
+
+请选择：
+  R — 重新登录，刷新 session 后重试（回到 Step 2.5-LOGIN）
+  H — 手动提供一个有效的响应示例（粘贴 JSON）
+  S — 选择其他接口（重新回答接口编号）
+```
+
+**HARD STOP: wait for user reply.**
+
+- If `R`: re-run Step 2.5-LOGIN Phase B/B-REUSE to refresh session, then re-run Step 3-A, then return to Step 3-B.
+- If `H`: accept the JSON the user pastes as the authoritative response sample. Store it as `RESPONSE_SAMPLE` and continue to field confirmation below.
+- If `S`: re-ask the endpoint selection question with the same captured list.
+
+**If VALID**, display the response body and ask:
 
 ```
 以下是该接口返回的数据示例：

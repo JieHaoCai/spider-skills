@@ -198,7 +198,7 @@ What is the login page URL?
 
 Store the answer as `LOGIN_PAGE_URL` (default to `$ARGUMENTS`).
 
-Run the following script. It opens a visible browser and waits up to 10 minutes for the user to log in, then automatically saves the full session to a file:
+Run the following script. It opens a visible browser, monitors URL changes without auto-closing, and saves the full session after timeout or user completion:
 
 ```python
 import asyncio, json, pathlib
@@ -212,17 +212,41 @@ async def open_and_wait(login_url):
         browser = await p.chromium.launch(headless=False)
         context = await browser.new_context()
         page = await context.new_page()
-        await page.goto(login_url, wait_until="load", timeout=30000)
-        print(f"[spider-analyst] Browser opened: {login_url}")
-        print("[spider-analyst] Waiting for login (timeout: 10 min)...")
+
         try:
-            await page.wait_for_url(
-                lambda url: login_url not in url,
-                timeout=600000
-            )
-            print("[spider-analyst] Page navigated — login likely succeeded.")
-        except Exception:
-            print("[spider-analyst] Timeout reached. Extracting session anyway.")
+            await page.goto(login_url, wait_until="load", timeout=30000)
+        except Exception as e:
+            print(f"[spider-analyst] Page load warning: {e}")
+
+        initial_url = page.url
+        initial_title = await page.title()
+        print(f"[spider-analyst] Browser opened.")
+        print(f"[spider-analyst] Initial URL:   {initial_url}")
+        print(f"[spider-analyst] Initial title: {initial_title}")
+
+        if "404" in initial_url or "404" in initial_title or "not found" in initial_title.lower():
+            print("[spider-analyst] WARNING: Site redirected to a 404/error page on open.")
+            print("[spider-analyst] Browser remains open — please navigate to the login page manually.")
+
+        print("[spider-analyst] Monitoring URL changes. Browser will stay open for 10 min.")
+
+        last_url = initial_url
+        try:
+            for _ in range(200):  # 200 × 3s = 600s = 10 min
+                await asyncio.sleep(3)
+                current_url = page.url
+                if current_url != last_url:
+                    title = await page.title()
+                    print(f"[spider-analyst] URL changed: {current_url} | title: {title}")
+                    if "404" in current_url or "404" in title or "not found" in title.lower():
+                        print("[spider-analyst] WARNING: Redirected to error page. Please navigate manually.")
+                    last_url = current_url
+        except Exception as e:
+            print(f"[spider-analyst] Monitor ended early: {e}")
+
+        final_url = page.url
+        final_title = await page.title()
+        print(f"[spider-analyst] Session capture starting. Final URL: {final_url} | title: {final_title}")
 
         # Extract full session
         cookies = await context.cookies()
@@ -261,11 +285,24 @@ After launching this script, immediately output:
 ```
 Browser window opened at: {LOGIN_PAGE_URL}
 
-Please log in manually — complete any CAPTCHA, SMS code, or QR scan as needed.
+If the browser shows a 404 or error page: the site redirected automatically.
+Please navigate to the login page manually within the browser window — the URL you provided is correct.
+
+Complete any CAPTCHA, SMS code, or QR scan as needed.
 Once you can see the main page and are fully logged in, type "done".
 ```
 
 **HARD STOP: Do not run any further code or proceed to Phase C until the user types "done".**
+
+**If Phase B script output contains WARNING (404/error redirect):**
+- Do NOT ask the user for a new login URL — the URL is correct, the site redirects it
+- Tell the user: "The browser opened but the site redirected to an error page. The browser window is still open — please navigate to the login page manually and complete login, then type done."
+- Continue waiting for "done" as normal
+
+**If the user reports the browser closed before they could log in:**
+- Do NOT ask for a new URL
+- Re-run Phase B immediately with the same `LOGIN_PAGE_URL`
+- Tell the user: "Re-opening the browser. The previous window closed — please log in in the new window and type done when finished."
 
 ---
 
@@ -821,6 +858,7 @@ platforms:
 - **Playwright is installed on demand, not upfront.** Install it only when a browser is actually needed: at Step 2.5-LOGIN (when login is required) or Step 2.5-PUBLIC (when headless capture is needed for a public SPA). Never install before Step 2 confirms which path applies.
 - **Always install into the project-local `.venv`.** Never install into `/tmp/`, the global system Python, or any path outside the project root. Always run scripts with `.venv/bin/python`.
 - **Never ask the user to provide cookies, tokens, or session data manually.** If Playwright is missing, install it. There is no fallback path that bypasses Playwright for browser-based sites.
+- **Never ask the user for a new or corrected login URL.** If the browser navigated to a 404/error page, that is the site's redirect behavior — the URL the user provided is correct. Re-open the browser with the same URL and tell the user to navigate manually.
 - **When login is required: the correct order is always — install Playwright → open headed browser → HARD STOP wait for "done" → extract full session → use session to capture API requests.** Never skip or reorder these phases.
 - **Step 2.5-LOGIN Phase B is a HARD STOP.** After launching the browser script, output the "please log in" message and wait for "done". Do not run Phase C or any subsequent step until the user types "done".
 - **Step 3-B is a HARD STOP.** Display all captured requests and wait for the user to identify the target endpoint. Do not proceed to Step 3-C until answered.

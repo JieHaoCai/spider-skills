@@ -251,7 +251,15 @@ async def open_and_wait(login_url):
 
         initial_url = page.url
         initial_title = await page.title()
-        print(f"[spider-analyst] Browser opened. URL: {initial_url} | title: {initial_title}")
+        print()
+        print("=" * 60)
+        print("  Browser is open — please log in now")
+        print("  Complete any CAPTCHA, SMS code, or QR scan as needed.")
+        print("  The browser will close automatically after login.")
+        print("=" * 60)
+        print(f"  URL: {initial_url}")
+        print(f"  Title: {initial_title}")
+        print()
 
         if is_error_page(initial_url, initial_title):
             print("[spider-analyst] WARNING: Site redirected to an error page. Please navigate to the login page manually in the browser window.")

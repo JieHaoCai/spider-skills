@@ -667,6 +667,38 @@ or describe it if none of the above look right.
 
 Store the confirmed request as `TARGET_API`, `TARGET_METHOD`, `TARGET_AUTH_HEADERS`, `TARGET_REQUEST_BODY`.
 
+Then immediately display the response body of the selected request in full (not truncated), and ask:
+
+```
+以下是该接口返回的数据示例：
+
+{full response body of the selected request, pretty-printed}
+
+请确认：
+1. 这是你想要的数据吗？里面包含了 {TARGET_DATA} 吗？
+2. 你需要保存哪些字段？（回复"全部"或列出字段名，例如 "name, rank, downloads"）
+
+确认正确请回复 Y 或直接列出字段，数据不对请描述问题。
+```
+
+**HARD STOP: wait for the user's answer.**
+
+Store confirmed field list as `TARGET_FIELDS` (use all fields if user replies "全部").
+
+Then ask:
+
+```
+数据保存格式？
+
+  1 — CSV（推荐，方便 Excel 打开）
+  2 — JSON（保留原始结构，适合二次处理）
+  3 — Excel (.xlsx)
+```
+
+**HARD STOP: wait for the user's answer.**
+
+Store as `OUTPUT_FORMAT`: `csv` / `json` / `xlsx`.
+
 ---
 
 #### Step 3-C: Ask about trigger conditions
@@ -872,6 +904,8 @@ Target data:   {TARGET_DATA}
 
   Trigger condition:  {description of interaction needed, or "none — loads on page open"}
 
+  Target fields:      {TARGET_FIELDS — field names to extract, or "all"}
+  Output format:      {OUTPUT_FORMAT — csv / json / xlsx}
   Stop condition:     {STOP_CONDITION — e.g. "empty list", "hasMore=false", "rank > 500"}
 
   API reversible:     {yes / no}
@@ -911,6 +945,8 @@ Target data:   {TARGET_DATA}
   Target API:            {TARGET_API}
   Auth credentials:      {cookie names / token header names from LIVE_SESSION}
   Trigger condition:     {TRIGGER_CONDITION}
+  Target fields:         {TARGET_FIELDS}
+  Output format:         {OUTPUT_FORMAT}
   Stop condition:        {STOP_CONDITION}
   Signing params:        {SIGNING_PARAMS or "none detected"}
 
@@ -1238,7 +1274,7 @@ If `Step 4 PASSED` and total count is reasonable: update `plan.md` Step 4 to `[x
 
 Create `platforms/{PLATFORM_NAME}/jobs/__init__.py` and `jobs/default_job.py`:
 - `pull_data()` — call `fetch_all()`, save raw JSON to `data/{PLATFORM_NAME}/{account}/{date}_raw.json`
-- `process_stats()` — read raw file, build DataFrame with actual API field names, output Excel/CSV
+- `process_stats()` — read raw file, extract only `TARGET_FIELDS` from each record, build DataFrame, output in `OUTPUT_FORMAT` (csv / json / xlsx) to `data/{PLATFORM_NAME}/{account}/{date}_output.{ext}`
 
 Then write `tests/test_{PLATFORM_NAME}_step5.py`:
 
@@ -1344,7 +1380,7 @@ When all steps in `plan.md` are `[x]`:
 - **Never ask the user for a new or corrected login URL.** If the browser navigated to a 404/error page, that is the site's redirect behavior — the URL the user provided is correct. Re-open the browser with the same URL and tell the user to navigate manually.
 - **When login is required: the correct order is always — install Playwright → open headed browser → HARD STOP wait for "done" → extract full session → use session to capture API requests.** Never skip or reorder these phases.
 - **Step 2.5-LOGIN Phase B: output the "please log in" message as plain text BEFORE running the script.** The script auto-detects login completion and exits on its own — do not wait for user input after the script finishes. Proceed to Phase C immediately when the script exits.
-- **Step 3-B is a HARD STOP.** Display all captured requests and wait for the user to identify the target endpoint. Do not proceed to Step 3-C until answered.
+- **Step 3-B is a HARD STOP (three parts).** First wait for the user to identify the target endpoint. Then show the full response body and wait for data confirmation + field selection. Then wait for output format selection. Do not proceed to Step 3-C until all three are answered.
 - **Step 3-C is a HARD STOP.** Ask about trigger conditions and wait for the answer before proceeding to Step 3-D.
 - **Step 3-D is a HARD STOP.** Ask about the stopping/termination condition and wait for the answer before proceeding to Step 4. Never assume the stop condition — always confirm with the user.
 - **Step 6 is a mandatory HARD STOP.** Display the complete plan in full, then wait for "Y". Do not abbreviate any section. Do not ask "should I proceed?" — the plan itself ends with that question. The dashboard layout rules shown in Step 5 are reference only — seeing them does NOT mean code generation should start.

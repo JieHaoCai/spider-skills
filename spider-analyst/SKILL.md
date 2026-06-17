@@ -314,16 +314,32 @@ No session file is passed — the tool runs headless without cookies. Then proce
 
 The tool injects session from `.spider_session.json` (cookies + localStorage + sessionStorage), opens the target page headless, scrolls to trigger lazy loads, captures all XHR/fetch responses, saves full results to `.spider_requests.json`, and prints a compact summary (index, method, status, url, 120-char response preview).
 
-To read the full response body of a specific request after the user identifies it:
+To read a **compact preview** of a specific response (first item only, to avoid context bloat):
 
 ```bash
 .venv/bin/python -c "
 import json
 requests = json.load(open('.spider_requests.json'))
 r = requests[<INDEX>]
-print(json.dumps(json.loads(r['response_body']), ensure_ascii=False, indent=2))
+body = json.loads(r['response_body']) if r['response_body'] else None
+if isinstance(body, list):
+    print(f'Array length: {len(body)}')
+    print('First item:')
+    print(json.dumps(body[0], ensure_ascii=False, indent=2))
+elif isinstance(body, dict):
+    # Find the data array inside the object
+    for k, v in body.items():
+        if isinstance(v, list) and len(v) > 0:
+            print(f'Key \"{k}\" is array, length: {len(v)}')
+            print('First item:')
+            print(json.dumps(v[0], ensure_ascii=False, indent=2))
+            break
+    else:
+        print(json.dumps(body, ensure_ascii=False, indent=2))
 "
 ```
+
+**Only show the user the first item's full fields + array length. Never dump the entire response body into the conversation.**
 
 ---
 
@@ -385,12 +401,14 @@ Before showing the response to the user, validate it automatically:
 - If `H`: accept the JSON the user pastes as the authoritative response sample. Store it as `RESPONSE_SAMPLE` and continue to field confirmation below.
 - If `S`: re-ask the endpoint selection question with the same captured list.
 
-**If VALID**, display the response body and ask:
+**If VALID**, show a compact preview (first item only) and ask:
 
 ```
-以下是该接口返回的数据示例：
+接口返回数据预览：
 
-{full response body of the selected request, pretty-printed}
+  数组长度：{N} 条
+  第一条记录字段：
+  {first item JSON, pretty-printed}
 
 请确认：
 1. 这是你想要的数据吗？里面包含了 {TARGET_DATA} 吗？
@@ -398,6 +416,8 @@ Before showing the response to the user, validate it automatically:
 
 确认正确请回复 Y 或直接列出字段，数据不对请描述问题。
 ```
+
+**Do NOT dump the full response array. Only show the first item and the total count.**
 
 **HARD STOP: wait for the user's answer.**
 
@@ -868,33 +888,20 @@ Create files:
   - `needs_browser_for_pull()` → `True` if `FETCH_STRATEGY` is `playwright-automation`
 - Append `{PLATFORM_NAME}` block to `config.yaml`
 
-Then write `tests/test_{PLATFORM_NAME}_step1.py`:
-
-```python
-# 测试：平台注册是否正确
-import sys; sys.path.insert(0, ".")
-from platforms.{PLATFORM_NAME} import Platform
-
-p = Platform()
-print(f"platform name:  {p.name}")
-print(f"display name:   {p.display_name}")
-print(f"needs login:    {p.needs_browser_for_login()}")
-print(f"needs headed:   {p.needs_headed_login()}")
-print(f"needs browser:  {p.needs_browser_for_pull()}")
-print("Step 1 PASSED")
-```
+Generate `tests/test_{PLATFORM_NAME}_step1.py` by copying `templates/test_step1_platform.py` and replacing `{{PLATFORM_NAME}}` with the actual platform name.
 
 Run it:
 ```bash
 .venv/bin/python tests/test_{PLATFORM_NAME}_step1.py
 ```
 
-If output ends with `Step 1 PASSED` and no errors: update `plan.md` Step 1 checkbox to `[x]` and tell the user:
-```
-✓ Step 1 通过 — 平台结构正确
-```
+**If output ends with `Step 1 PASSED`:** update `plan.md` Step 1 to `[x]`, tell the user `✓ Step 1 通过 — 平台结构正确`.
 
-If it fails: fix the error, re-run, do not proceed until it passes.
+**If it fails:** apply the error recovery protocol:
+- Read the error message carefully
+- If it is an `ImportError` or `AttributeError`: the generated `platform.py` has a structural issue — fix it and re-run (max 2 attempts)
+- If it still fails after 2 attempts: tell the user the exact error and ask: "平台模块加载失败，请确认 `platforms/{PLATFORM_NAME}/platform.py` 中 `name` 字段和类名是否正确"
+- Do NOT proceed to Step 2 until Step 1 passes
 
 ---
 
@@ -945,56 +952,34 @@ async def do_login(page, cdp, account, password, config, tools):
         raise LoginFailedError(account)
 ```
 
-Then write `tests/test_{PLATFORM_NAME}_step2.py` — opens a headed browser and attempts login using credentials from `config.yaml`:
+Generate `tests/test_{PLATFORM_NAME}_step2.py` by copying `templates/test_step2_login.py` and replacing `{{PLATFORM_NAME}}` with the actual platform name.
 
-```python
-# 测试：登录流程与 session 写入
-import asyncio, json, pathlib, sys, yaml
-sys.path.insert(0, ".")
-
-SESSION_FILE = f".spider_session_{'{PLATFORM_NAME}'}.json"
-
-async def test_login():
-    from playwright.async_api import async_playwright
-    config = yaml.safe_load(open("config.yaml"))
-    account_cfg = config["platforms"]["{PLATFORM_NAME}"]["accounts"][0]
-    account = account_cfg["name"]
-    password = account_cfg["password"]
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        page = await context.new_page()
-
-        from platforms.{PLATFORM_NAME}.login import do_login
-        await do_login(page, None, account, password, config["platforms"]["{PLATFORM_NAME}"], None)
-
-        cookies = await context.cookies()
-        pathlib.Path(SESSION_FILE).write_text(json.dumps({"cookies": cookies}, ensure_ascii=False, indent=2))
-        print(f"Session saved: {len(cookies)} cookies")
-        print(f"Current URL:   {page.url}")
-        await browser.close()
-
-asyncio.run(test_login())
+Run it:
+```bash
+.venv/bin/python tests/test_{PLATFORM_NAME}_step2.py
 ```
 
-**This step requires manual confirmation.** After running the test, output:
+**This step requires manual confirmation.** After launching, output:
 
 ```
-Step 2 测试已启动。
-请观察浏览器窗口，确认登录是否成功完成，session 文件是否写入。
-确认通过请回复 Y，失败请描述问题。
+Step 2 测试已启动，浏览器已打开。
+请确认：
+  1. 登录流程是否正常完成（无报错、无卡住）
+  2. 浏览器最终 URL 是否已离开登录页
+  3. Session 文件是否写入（见脚本输出的 Cookies 数量）
+
+确认通过请回复 Y，失败请描述具体现象。
 ```
 
 **HARD STOP: wait for user to reply Y.**
 
-On Y: update `plan.md` Step 2 to `[x]`, tell the user `✓ Step 2 通过 — 登录成功，session 已写入`.
+**If user replies Y:** update `plan.md` Step 2 to `[x]`, tell the user `✓ Step 2 通过 — 登录成功，session 已写入`.
+
+**If user describes a failure:** apply the error recovery protocol:
+- Selector wrong (can't find input/button): ask user to open DevTools on the login page and provide the correct CSS selector, then fix `login.py` and re-run
+- CAPTCHA blocks login: note `CAPTCHA_TYPE`, update `login.py` to use `needs_headed_login() = True` and add the manual wait logic, then re-run
+- Login succeeds but cookie count is 0: the session may be in localStorage — check `.spider_session_{PLATFORM_NAME}.json` and fix the extraction logic
+- If the same failure persists after 2 fix attempts: tell the user "登录脚本多次失败，建议改用工具直接登录：`.venv/bin/python tools/login_browser.py <login_url>`，然后手动完成登录"
 
 ---
 
@@ -1005,33 +990,31 @@ Create `platforms/{PLATFORM_NAME}/api_client.py` (if `FETCH_STRATEGY = httpx`) o
 - Include `TRIGGER_CONDITION` params exactly as captured
 - For now: fetch **page 1 only** (pagination comes in Step 4)
 
-Then write `tests/test_{PLATFORM_NAME}_step3.py`:
-
-```python
-# 测试：拉取第一页数据
-import asyncio, json, sys
-sys.path.insert(0, ".")
-
-async def test_fetch():
-    from platforms.{PLATFORM_NAME}.api_client import {ClientClassName}
-    client = {ClientClassName}(session_file=".spider_session_{PLATFORM_NAME}.json")
-    data = await client.fetch_page(page=1)
-    print(f"Items count:  {len(data)}")
-    print(f"First item:   {json.dumps(data[0], ensure_ascii=False, indent=2)}")
-    assert len(data) > 0, "No data returned"
-    print("Step 3 PASSED")
-
-asyncio.run(test_fetch())
-```
+Generate `tests/test_{PLATFORM_NAME}_step3.py` by copying `templates/test_step3_fetch.py` and replacing `{{PLATFORM_NAME}}` and `{{CLIENT_CLASS}}` with actual values.
 
 Run it:
 ```bash
 .venv/bin/python tests/test_{PLATFORM_NAME}_step3.py
 ```
 
-If `Step 3 PASSED` and data looks correct: update `plan.md` Step 3 to `[x]`, tell the user `✓ Step 3 通过 — 第一页数据拉取成功`.
+**If output ends with `Step 3 PASSED`:** show the first item to the user and ask:
 
-If the data fields look wrong, ask the user to confirm before proceeding.
+```
+第一页数据已拉取，第一条记录如下：
+{first item JSON}
+
+字段是否与预期一致？回复 Y 继续，或描述问题。
+```
+
+**HARD STOP: wait for user to confirm fields look correct.**
+
+On Y: update `plan.md` Step 3 to `[x]`, tell the user `✓ Step 3 通过 — 第一页数据拉取成功`.
+
+**If it fails:** apply the error recovery protocol:
+- HTTP 401/403: session 过期 — 重新运行 `tools/login_browser.py` 刷新 session，再重试
+- HTTP 4xx with signature error: 签名参数被拒绝 — 重新评估 Step 4 结论，将 `FETCH_STRATEGY` 改为 `playwright-automation`，重新生成 `browser_scraper.py`
+- `fetch_page` 方法不存在: `api_client.py` 接口名有误 — 修正方法名后重试
+- 连续 2 次失败仍无法解决: 告知用户具体报错，询问是否改用浏览器模拟方案
 
 ---
 
@@ -1039,31 +1022,19 @@ If the data fields look wrong, ask the user to confirm before proceeding.
 
 Update `api_client.py` to add the full pagination loop based on `STOP_CONDITION`.
 
-Then write `tests/test_{PLATFORM_NAME}_step4.py`:
-
-```python
-# 测试：分页抓取全量数据
-import asyncio, json, sys
-sys.path.insert(0, ".")
-
-async def test_paginate():
-    from platforms.{PLATFORM_NAME}.api_client import {ClientClassName}
-    client = {ClientClassName}(session_file=".spider_session_{PLATFORM_NAME}.json")
-    all_data = await client.fetch_all()
-    print(f"Total items fetched: {len(all_data)}")
-    print(f"Last item: {json.dumps(all_data[-1], ensure_ascii=False)}")
-    assert len(all_data) > 0
-    print("Step 4 PASSED")
-
-asyncio.run(test_paginate())
-```
+Generate `tests/test_{PLATFORM_NAME}_step4.py` by copying `templates/test_step4_paginate.py` and replacing `{{PLATFORM_NAME}}` and `{{CLIENT_CLASS}}` with actual values.
 
 Run it:
 ```bash
 .venv/bin/python tests/test_{PLATFORM_NAME}_step4.py
 ```
 
-If `Step 4 PASSED` and total count is reasonable: update `plan.md` Step 4 to `[x]`, tell the user `✓ Step 4 通过 — 分页正常，共抓取 {N} 条`.
+**If output ends with `Step 4 PASSED`:** update `plan.md` Step 4 to `[x]`, tell the user `✓ Step 4 通过 — 分页正常，共抓取 {N} 条`.
+
+**If it fails:** apply the error recovery protocol:
+- 总条数为 0 或只有第一页：分页参数名有误，或终止条件判断逻辑错误 — 检查 `STOP_CONDITION` 的字段名，修正后重试
+- 无限循环/超时：终止条件从未触发 — 添加最大页数保护（如 `max_pages=200`），告知用户
+- 连续 2 次失败: 降级方案 — 告知用户"分页抓取暂时跳过，先用第一页数据验证后续步骤，分页问题后续单独修复"，继续进入 Step 5
 
 ---
 
@@ -1073,35 +1044,19 @@ Create `platforms/{PLATFORM_NAME}/jobs/__init__.py` and `jobs/default_job.py`:
 - `pull_data()` — call `fetch_all()`, save raw JSON to `data/{PLATFORM_NAME}/{account}/{date}_raw.json`
 - `process_stats()` — read raw file, extract only `TARGET_FIELDS` from each record, build DataFrame, output in `OUTPUT_FORMAT` (csv / json / xlsx) to `data/{PLATFORM_NAME}/{account}/{date}_output.{ext}`
 
-Then write `tests/test_{PLATFORM_NAME}_step5.py`:
-
-```python
-# 测试：数据写入与处理
-import asyncio, pathlib, sys
-sys.path.insert(0, ".")
-
-async def test_job():
-    from platforms.{PLATFORM_NAME}.jobs.default_job import DefaultJob
-    import yaml
-    config = yaml.safe_load(open("config.yaml"))
-    job = DefaultJob(config=config["platforms"]["{PLATFORM_NAME}"], account="test")
-    output_path = await job.pull_data()
-    print(f"Raw data saved: {output_path}")
-    assert pathlib.Path(output_path).exists()
-    stats_path = job.process_stats(output_path)
-    print(f"Stats saved:    {stats_path}")
-    assert pathlib.Path(stats_path).exists()
-    print("Step 5 PASSED")
-
-asyncio.run(test_job())
-```
+Generate `tests/test_{PLATFORM_NAME}_step5.py` by copying `templates/test_step5_job.py` and replacing `{{PLATFORM_NAME}}` with the actual platform name.
 
 Run it:
 ```bash
 .venv/bin/python tests/test_{PLATFORM_NAME}_step5.py
 ```
 
-If `Step 5 PASSED`: update `plan.md` Step 5 to `[x]`, tell the user `✓ Step 5 通过 — 数据文件已生成`.
+**If output ends with `Step 5 PASSED`:** update `plan.md` Step 5 to `[x]`, tell the user `✓ Step 5 通过 — 数据文件已生成`.
+
+**If it fails:** apply the error recovery protocol:
+- `pull_data` 失败：通常是 session 过期或网络问题 — 先确认 Step 3 的 session 仍有效，再重试
+- `process_stats` 失败：字段名与实际 API 响应不匹配 — 读取原始 JSON 文件确认真实字段名，修正 `default_job.py` 中的列名后重试
+- 文件路径不存在：`data/` 目录未创建 — 在 `pull_data()` 中添加 `pathlib.Path(output_path).parent.mkdir(parents=True, exist_ok=True)` 后重试
 
 ---
 

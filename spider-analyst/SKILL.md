@@ -581,6 +581,27 @@ Store as `TRIGGER_CONDITION`. If there is a trigger, note it for the plan and co
 
 ---
 
+#### Step 3-D: Ask about termination / stopping condition
+
+```
+When should the scraper stop fetching data?
+
+For example:
+  - When the API returns an empty list or fewer items than the page size
+  - After a fixed number of pages or items (e.g. "top 100 only")
+  - When a date or rank field crosses a threshold (e.g. "stop when rank > 500")
+  - The API itself signals the last page (e.g. a "hasMore" or "totalPages" field)
+
+Please describe the stopping condition, or share a sample API response
+so I can identify the right field.
+```
+
+**HARD STOP: wait for the user's answer.**
+
+Store as `STOP_CONDITION`. Include the exact field name and value from the API response if the user provides one.
+
+---
+
 ### 4. Assess API Reverse Engineering Feasibility
 
 **Goal: determine whether plain HTTP calls (httpx) can replace browser automation for data fetching.**
@@ -739,6 +760,8 @@ Target data:   {TARGET_DATA}
 
   Trigger condition:  {description of interaction needed, or "none — loads on page open"}
 
+  Stop condition:     {STOP_CONDITION — e.g. "empty list", "hasMore=false", "rank > 500"}
+
   API reversible:     {yes / no}
                       Fetch strategy: {httpx direct call / Playwright browser automation}
                       Evidence: {replay test HTTP status and response preview}
@@ -776,6 +799,7 @@ Target data:   {TARGET_DATA}
   Target API:            {TARGET_API}
   Auth credentials:      {cookie names / token header names from LIVE_SESSION}
   Trigger condition:     {TRIGGER_CONDITION}
+  Stop condition:        {STOP_CONDITION}
   Signing params:        {SIGNING_PARAMS or "none detected"}
 
 ──────────────────────────────────────
@@ -848,6 +872,7 @@ async def do_login(page, cdp, account, password, config, tools):
 Generate an `httpx` wrapper based on `TARGET_API` and `LIVE_SESSION` credential fields:
 - Inject exact auth headers/cookies captured during analysis
 - If `TRIGGER_CONDITION` involves POST body params, include those exactly
+- Implement pagination loop with termination based on `STOP_CONDITION` (e.g. break when list is empty, `hasMore` is false, or a threshold field is crossed)
 - 429 exponential backoff retry (5s → 10s → 20s → 40s)
 - Token expiry detection (raise `TokenExpiredError`)
 
@@ -916,7 +941,8 @@ platforms:
 - **When login is required: the correct order is always — install Playwright → open headed browser → HARD STOP wait for "done" → extract full session → use session to capture API requests.** Never skip or reorder these phases.
 - **Step 2.5-LOGIN Phase B: output the "please log in" message as plain text BEFORE running the script.** The script auto-detects login completion and exits on its own — do not wait for user input after the script finishes. Proceed to Phase C immediately when the script exits.
 - **Step 3-B is a HARD STOP.** Display all captured requests and wait for the user to identify the target endpoint. Do not proceed to Step 3-C until answered.
-- **Step 3-C is a HARD STOP.** Ask about trigger conditions and wait for the answer before proceeding to Step 4.
+- **Step 3-C is a HARD STOP.** Ask about trigger conditions and wait for the answer before proceeding to Step 3-D.
+- **Step 3-D is a HARD STOP.** Ask about the stopping/termination condition and wait for the answer before proceeding to Step 4. Never assume the stop condition — always confirm with the user.
 - **Step 6 is a mandatory HARD STOP.** Display the complete plan in full, then wait for "Y". Do not abbreviate any section. Do not ask "should I proceed?" — the plan itself ends with that question.
 - Never create any files before the user confirms the plan in Step 6.
 - Steps 2.5 through 4 are skipped entirely when Step 1 concludes Case A (data in HTML source).
